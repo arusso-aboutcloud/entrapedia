@@ -16,7 +16,15 @@ Open item before this chunk: confirm Vectorize free-tier availability on the acc
 
 ## Chunk 3 — Ingestion pipeline
 
-Cron-driven ingestion worker forking the Entra-Tracker pattern: fetch upstream sources, diff against stored state, and process only changed files (chunk, embed, upsert). Per-type cadence: change feeds ~4h, doc corpus daily, structured/community weekly. Incremental-only by design, to stay within the neuron budget.
+Cron-driven ingestion worker forking the Entra-Tracker pattern: fetch upstream sources, diff against stored state, and process only changed files (chunk, embed, upsert). Per-type cadence: change feeds ~4h, doc corpus daily, structured/community weekly. Incremental-only by design, to stay within the neuron budget. Split into two sub-chunks:
+
+### Chunk 3a — Tier-A fetch + store — done
+
+Ingestion worker (`workers/ingestion/`) that resolves each Tier-A repo head, walks the tree (descend-on-truncation, resumable frontier in `sync_state`), diffs git blob SHAs against `documents`, and stores changed/new bodies to R2 with `documents` upserts tagged `current`/`legacy`. Per-run file + subrequest caps keep it free-tier-safe and resumable. Daily cron + authenticated manual trigger. Fetch-and-store only — no embedding, no `chunks`, no vectors.
+
+### Chunk 3b — Embedding — next
+
+Embed changed chunks with `@cf/baai/bge-base-en-v1.5` (768-dim), write `chunks` rows, and upsert vectors into the `entrapedia-chunks` Vectorize index with `trust`/`source`/`content_type` metadata. Incremental (changed-only) to stay within the neuron budget.
 
 ## Chunk 4 — RAG retrieval + search
 

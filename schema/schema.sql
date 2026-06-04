@@ -1,14 +1,21 @@
--- Entrapedia D1 schema (chunk 2: storage tier)
+-- Entrapedia D1 schema.
 --
 -- Applied to the `entrapedia` D1 database. Timestamps are INTEGER unix-epoch
 -- seconds. The source / trust / content_type / license / attribution fields
 -- follow DESIGN.md sections 3-4. ASCII-only.
+--
+-- Migration history:
+--   chunk 2  - initial tables (documents, chunks, answer_cache, sync_state).
+--   chunk 3a - add documents.layer (current|legacy). Applied to the live DB as:
+--                ALTER TABLE documents ADD COLUMN layer TEXT NOT NULL DEFAULT 'current';
+--              The CREATE TABLE below includes the column for fresh databases.
 
 CREATE TABLE IF NOT EXISTS documents (
   doc_id        TEXT PRIMARY KEY,
   source        TEXT NOT NULL,
   content_type  TEXT NOT NULL,
   trust         TEXT NOT NULL,
+  layer         TEXT NOT NULL DEFAULT 'current',  -- current | legacy (chunk 3a)
   source_url    TEXT,
   license       TEXT,
   attribution   TEXT,

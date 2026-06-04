@@ -4,23 +4,30 @@
 # secrets and are committed intentionally. The account ID and API tokens are
 # NOT in this file — they live in Wrangler secrets / .dev.vars.
 #
-# Resources were created and wired in CHUNK 2 (storage tier). No Worker entry
-# point (`main`) or cron is wired yet — that lands with the ingestion worker
-# (chunk 3).
+# Storage resources were created and wired in CHUNK 2. The ingestion worker
+# (CHUNK 3a) is wired below: `main` points at workers/ingestion and the daily
+# Tier-A cron is active. The AI and VECTORIZE bindings are declared for later
+# chunks (3b/4) but are NOT used by the ingestion worker.
+#
+# Secrets (NOT committed; set via `wrangler secret put` — see docs/OPERATIONS.md):
+#   GITHUB_TOKEN   - GitHub token (public-repo read) for GitHub API + raw fetches.
+#   TRIGGER_SECRET - guards the manual /run trigger on the worker.
 #
 # See DESIGN.md (sections 3, 4, 6) and ARCHITECTURE.md for the contracts these
 # bindings satisfy.
 
 name = "entrapedia"
+main = "workers/ingestion/index.js"
 compatibility_date = "2026-06-04"
 
-# main = "workers/<entrypoint>.ts"   # set per-worker when worker code lands (chunk 3+)
-
 # --- Scheduled re-indexing (Cron Triggers) -------------------------------
-# Ingestion cadence per DESIGN.md §3 / ARCHITECTURE.md: change feeds ~4h,
-# doc corpus daily, structured/community weekly. Placeholder only — set in chunk 3.
-# [triggers]
-# crons = []   # e.g. ["0 */4 * * *", "0 3 * * *", "0 4 * * 1"]
+# Daily Tier-A doc-corpus reconcile (DESIGN.md §3 / ARCHITECTURE.md). Per-run
+# work is capped (MAX_FILES_PER_RUN / SUBREQUEST_BUDGET) and resumable, so the
+# daily cadence drives an incremental backfill and then steady-state sync.
+# Change-feed (~4h) and weekly structured cadences arrive with their sources in
+# later chunks.
+[triggers]
+crons = ["0 6 * * *"]
 
 # --- D1: index, metadata, source/trust/license fields, answer cache ------
 [[d1_databases]]
