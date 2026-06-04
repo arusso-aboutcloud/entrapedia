@@ -8,7 +8,7 @@ Private repository, directory skeleton, configuration stubs, and the authoritati
 
 Licensing was settled in a follow-up commit: code under MIT, content under CC-BY-4.0.
 
-## Chunk 2 — Storage tier
+## Chunk 2 — Storage tier — done
 
 Create and wire the Cloudflare storage resources: D1 (index, metadata, source/trust/license fields, answer cache), R2 (raw corpus), Vectorize (embeddings). Real binding IDs land in `wrangler.toml`. D1 schema committed under `schema/`.
 

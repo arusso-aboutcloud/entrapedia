@@ -32,10 +32,11 @@ A rendered SVG of this diagram lives at `docs/architecture.svg`.
 
 **Ingestion worker (Cron Triggers / Workflows).** Forks the existing Entra-Tracker ingestion pattern. On schedule, it fetches upstream sources, diffs against what is already stored, and processes only changed files: chunk, embed, upsert. Change-feed sources (Type B) run on a short cadence (~4h); the full doc corpus (Type A) runs daily; structured/community sources (Type D) run weekly. Incremental-only processing is what keeps embedding within the neuron budget.
 
-**Storage tier.**
-- **R2** — raw fetched markdown / HTML bodies. The corpus of record.
-- **D1** — page index, document metadata, source/trust/license fields, and the answer cache (normalized-question keyed).
-- **Vectorize** — embeddings for RAG retrieval. (Free-tier availability to be confirmed on the account dashboard before the storage chunk; fallback is Worker-side similarity over vectors in D1/R2.)
+**Storage tier.** Resources provisioned and wired in chunk 2 (resource names in parentheses).
+- **R2** (`entrapedia-corpus`) — raw fetched markdown / HTML bodies. The corpus of record.
+- **D1** (`entrapedia`) — page index, document metadata, source/trust/license fields, and the answer cache (normalized-question keyed).
+- **Vectorize** (`entrapedia-chunks`, 768 dimensions, cosine metric; embedding model `@cf/baai/bge-base-en-v1.5`) — embeddings for RAG retrieval. Trust separation is by metadata filter, with metadata indexes on `trust`, `source`, and `content_type`. (Free-tier availability to be confirmed on the account dashboard before the storage chunk; fallback is Worker-side similarity over vectors in D1/R2.)
+- **KV** (`entrapedia-cache`) — answer cache keyed by normalized question.
 
 **Query worker.** Serves search and RAG retrieval with citations. In v1 it returns retrieved, cited content and cache hits — no model generation. The generation layer (tiered model routing, answer caching, trust-aware citation) is added after retrieval quality is proven. Web search is an explicit opt-in mode, never the default path.
 

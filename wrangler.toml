@@ -1,16 +1,15 @@
-# Entrapedia — wrangler.toml (binding-declaration STUB)
+# Entrapedia — wrangler.toml
 #
-# This file DECLARES the Cloudflare bindings the design calls for; it does NOT
-# implement or wire any of them. There are intentionally NO live resource IDs
-# in this file.
+# Storage bindings for the Entrapedia Workers. The resource IDs below are NOT
+# secrets and are committed intentionally. The account ID and API tokens are
+# NOT in this file — they live in Wrangler secrets / .dev.vars.
 #
-# The real resources (D1 database, R2 bucket, Vectorize index, KV namespace)
-# and their IDs are created in CHUNK 2 (storage tier). Until then every binding
-# below is commented out and no Worker is configured to use it. No Worker entry
-# point (`main`) is wired in this chunk either.
+# Resources were created and wired in CHUNK 2 (storage tier). No Worker entry
+# point (`main`) or cron is wired yet — that lands with the ingestion worker
+# (chunk 3).
 #
-# See DESIGN.md (sections 2, 3, 6) and ARCHITECTURE.md for the contracts these
-# bindings must satisfy.
+# See DESIGN.md (sections 3, 4, 6) and ARCHITECTURE.md for the contracts these
+# bindings satisfy.
 
 name = "entrapedia"
 compatibility_date = "2026-06-04"
@@ -24,28 +23,30 @@ compatibility_date = "2026-06-04"
 # crons = []   # e.g. ["0 */4 * * *", "0 3 * * *", "0 4 * * 1"]
 
 # --- D1: index, metadata, source/trust/license fields, answer cache ------
-# [[d1_databases]]
-# binding = "DB"
-# database_name = "entrapedia"
-# database_id = ""   # created in chunk 2
+[[d1_databases]]
+binding = "DB"
+database_name = "entrapedia"
+database_id = "fcf6aeff-74d0-4978-9df2-49ef344c6dd6"
 
 # --- R2: raw fetched markdown / HTML — the corpus of record ---------------
-# [[r2_buckets]]
-# binding = "CORPUS"
-# bucket_name = "entrapedia-corpus"   # created in chunk 2
+[[r2_buckets]]
+binding = "CORPUS"
+bucket_name = "entrapedia-corpus"
 
 # --- Vectorize: embeddings for RAG retrieval -----------------------------
-# Free-tier availability to be confirmed before chunk 2; fallback is
-# Worker-side similarity over vectors in D1/R2 (see DESIGN.md §6).
-# [[vectorize]]
-# binding = "VECTORIZE"
-# index_name = "entrapedia-embeddings"   # created in chunk 2
+# Embedding model @cf/baai/bge-base-en-v1.5 -> 768 dimensions, float32; index
+# metric cosine. The index dimension (768) MUST match this model. Trust
+# separation is by metadata filter (trust / source / content_type), not by
+# separate indexes or namespaces.
+[[vectorize]]
+binding = "VECTORIZE"
+index_name = "entrapedia-chunks"
 
 # --- KV: answer cache (normalized-question keyed) ------------------------
-# [[kv_namespaces]]
-# binding = "ANSWER_CACHE"
-# id = ""   # created in chunk 2
+[[kv_namespaces]]
+binding = "ANSWER_CACHE"
+id = "7f1f60eb51c54429b81a363a8b89eb9a"
 
 # --- Workers AI: embeddings + (later, post-chunk-4) grounded generation --
-# [ai]
-# binding = "AI"
+[ai]
+binding = "AI"
