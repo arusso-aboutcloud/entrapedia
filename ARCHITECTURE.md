@@ -1,0 +1,55 @@
+# Entrapedia — Architecture
+
+Cloudflare-native, free-tier, trust-tiered. This document describes the system shape; `DESIGN.md` holds the binding contracts.
+
+## Layers
+
+```
+Sources (trust-tiered)
+        |
+        v
+Ingestion worker (cron)  -- fetch, diff, chunk, embed changed-only
+        |
+        v
+Storage:  R2 (raw markdown)  |  D1 (index, metadata, cache)  |  Vectorize (embeddings)
+        |
+        v
+Query worker  -- search, RAG retrieve, cited answers
+              -- (LLM generation + web search: later, opt-in)
+        |
+        v
+Pages frontend (Astro, Chakra Petch, brutalist)
+        |
+        v
+Users and engineers
+```
+
+A rendered SVG of this diagram lives at `docs/architecture.svg`.
+
+## Components
+
+**Sources.** Split by trust level (see `DESIGN.md` §3). Official Microsoft sources are authoritative; community sources are attributed and flagged. The split is carried through every downstream layer as a per-chunk trust attribute.
+
+**Ingestion worker (Cron Triggers / Workflows).** Forks the existing Entra-Tracker ingestion pattern. On schedule, it fetches upstream sources, diffs against what is already stored, and processes only changed files: chunk, embed, upsert. Change-feed sources (Type B) run on a short cadence (~4h); the full doc corpus (Type A) runs daily; structured/community sources (Type D) run weekly. Incremental-only processing is what keeps embedding within the neuron budget.
+
+## Storage tier.
+- **R2** — raw fetched markdown / HTML bodies. The corpus of record.
+- **D1** — page index, document metadata, source/trust/license fields, and the answer cache (normalized-question keyed).
+- **Vectorize** — embeddings for RAG retrieval. (Free-tier availability to be confirmed on the account dashboard before the storage chunk; fallback is Worker-side similarity over vectors in D1/R2.)
+
+**Query worker.** Serves search and RAG retrieval with citations. In v1 it returns retrieved, cited content and cache hits — no model generation. The generation layer (tiered model routing, answer caching, trust-aware citation) is added after retrieval quality is proven. Web search is an explicit opt-in mode, never the default path.
+
+**Pages frontend.** Static site (Astro / Starlight). Chakra Petch typography, neo-brutalist layout, trust-tier visual treatment (official content distinct from community), per-page source-attribution footers. The WebGL logo-evolution hero is a later, isolated component that depends on nothing else.
+
+## Free-tier surface
+
+Used: Pages, Workers, Workers AI, Vectorize, D1, R2, Cron Triggers / Workflows, KV (answer cache).
+
+Explicitly not used (no free tier): Browser Rendering, Hyperdrive, Images.
+
+## Cross-cutting rules
+
+- Every stored chunk carries source, trust level, and license metadata.
+- Retrieval conflict resolution: Official outranks Community.
+- Every surfaced snippet carries an inline citation; every page carries an attribution footer.
+- See `DESIGN.md` §5–§6 for the binding safety and cost contracts.

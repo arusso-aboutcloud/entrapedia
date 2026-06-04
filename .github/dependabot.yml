@@ -1,0 +1,13 @@
+# Dependabot configuration for Entrapedia.
+# The dependency posture is in place before any workflows or packages land
+# (see SECURITY.md and CONTRIBUTING.md). Schedules are weekly.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"

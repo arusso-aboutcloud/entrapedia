@@ -1,0 +1,51 @@
+# Entrapedia — wrangler.toml (binding-declaration STUB)
+#
+# This file DECLARES the Cloudflare bindings the design calls for; it does NOT
+# implement or wire any of them. There are intentionally NO live resource IDs
+# in this file.
+#
+# The real resources (D1 database, R2 bucket, Vectorize index, KV namespace)
+# and their IDs are created in CHUNK 2 (storage tier). Until then every binding
+# below is commented out and no Worker is configured to use it. No Worker entry
+# point (`main`) is wired in this chunk either.
+#
+# See DESIGN.md (sections 2, 3, 6) and ARCHITECTURE.md for the contracts these
+# bindings must satisfy.
+
+name = "entrapedia"
+compatibility_date = "2026-06-04"
+
+# main = "workers/<entrypoint>.ts"   # set per-worker when worker code lands (chunk 3+)
+
+# --- Scheduled re-indexing (Cron Triggers) -------------------------------
+# Ingestion cadence per DESIGN.md §3 / ARCHITECTURE.md: change feeds ~4h,
+# doc corpus daily, structured/community weekly. Placeholder only — set in chunk 3.
+# [triggers]
+# crons = []   # e.g. ["0 */4 * * *", "0 3 * * *", "0 4 * * 1"]
+
+# --- D1: index, metadata, source/trust/license fields, answer cache ------
+# [[d1_databases]]
+# binding = "DB"
+# database_name = "entrapedia"
+# database_id = ""   # created in chunk 2
+
+# --- R2: raw fetched markdown / HTML — the corpus of record ---------------
+# [[r2_buckets]]
+# binding = "CORPUS"
+# bucket_name = "entrapedia-corpus"   # created in chunk 2
+
+# --- Vectorize: embeddings for RAG retrieval -----------------------------
+# Free-tier availability to be confirmed before chunk 2; fallback is
+# Worker-side similarity over vectors in D1/R2 (see DESIGN.md §6).
+# [[vectorize]]
+# binding = "VECTORIZE"
+# index_name = "entrapedia-embeddings"   # created in chunk 2
+
+# --- KV: answer cache (normalized-question keyed) ------------------------
+# [[kv_namespaces]]
+# binding = "ANSWER_CACHE"
+# id = ""   # created in chunk 2
+
+# --- Workers AI: embeddings + (later, post-chunk-4) grounded generation --
+# [ai]
+# binding = "AI"
