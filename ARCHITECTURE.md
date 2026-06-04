@@ -32,7 +32,7 @@ A rendered SVG of this diagram lives at `docs/architecture.svg`.
 
 **Ingestion worker (Cron Triggers / Workflows).** Forks the existing Entra-Tracker ingestion pattern. On schedule, it fetches upstream sources, diffs against what is already stored, and processes only changed files: chunk, embed, upsert. Change-feed sources (Type B) run on a short cadence (~4h); the full doc corpus (Type A) runs daily; structured/community sources (Type D) run weekly. Incremental-only processing is what keeps embedding within the neuron budget.
 
-## Storage tier.
+**Storage tier.**
 - **R2** — raw fetched markdown / HTML bodies. The corpus of record.
 - **D1** — page index, document metadata, source/trust/license fields, and the answer cache (normalized-question keyed).
 - **Vectorize** — embeddings for RAG retrieval. (Free-tier availability to be confirmed on the account dashboard before the storage chunk; fallback is Worker-side similarity over vectors in D1/R2.)
