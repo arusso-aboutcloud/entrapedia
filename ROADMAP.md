@@ -6,6 +6,8 @@ Entrapedia is built in scoped, reviewed chunks. Each chunk has explicit delivera
 
 Private repository, directory skeleton, configuration stubs, and the authoritative documentation set (`README`, `DESIGN`, `ARCHITECTURE`, `SECURITY`, `CONTRIBUTING`, this file). `wrangler.toml` as a binding-declaration stub with no live IDs. No code, no provisioned resources.
 
+Licensing was settled in a follow-up commit: code under MIT, content under CC-BY-4.0.
+
 ## Chunk 2 — Storage tier
 
 Create and wire the Cloudflare storage resources: D1 (index, metadata, source/trust/license fields, answer cache), R2 (raw corpus), Vectorize (embeddings). Real binding IDs land in `wrangler.toml`. D1 schema committed under `schema/`.
@@ -35,4 +37,4 @@ Once retrieval is validated, add tiered model routing and grounded, cited genera
 ## Deferred / conditional
 
 - Microsoft 365 full doc corpus — large, only partially Entra-relevant, expensive to embed. Revisit only with explicit scope approval.
-- Public launch tasks (final license selection, flipping the repo public, demos/blog) — after the site is functional.
+- Public launch tasks (final content review, demos/blog) — after the site is functional. The repository is already public; licensing is settled (MIT / CC-BY-4.0).

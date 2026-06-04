@@ -68,7 +68,6 @@ A reference encyclopedia for Microsoft Entra ID, for two audiences at once: end 
 | devblogs identity | C | Official | daily | attribute |
 | Tech Community Entra blog | C | Official | daily | attribute |
 | M365 Maps | D | Community | weekly | CC-BY-4.0, attribute Dinnage |
-| Wikipedia (Entra ID / Connect) | D | Community | weekly | CC-BY-SA, attribute |
 | AADSTS-Entra-Errors (self) | D | Official (self) | on change | own |
 | Entra-RoleLens (self) | D | Official (self) | on change | own |
 
@@ -79,7 +78,6 @@ M365-365-docs and the full Microsoft 365 corpus are deliberately **deferred** �
 - `entra-docs` is MIT.
 - `azure-docs` and most other MicrosoftDocs repos publish content under CC-BY-4.0 (code under MIT). This **requires per-page attribution and a link back to the source article**, and grants no rights to Microsoft names, logos, or trademarks.
 - M365 Maps is CC-BY-4.0 by Aaron Dinnage — **per-page attribution to Dinnage / m365maps.com required**, no implied Microsoft endorsement.
-- Wikipedia is CC-BY-SA — attribution required; share-alike implications noted.
 
 Therefore every rendered page carries a source-attribution footer (source name, original URL, license). Every AI-surfaced snippet carries an inline citation. **A snippet without a citation is a bug.**
 

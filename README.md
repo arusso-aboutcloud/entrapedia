@@ -33,4 +33,4 @@ Entrapedia re-publishes and indexes third-party documentation under its respecti
 
 ## License
 
-To be set before public release. The repository is private during development.
+Code is licensed under the MIT License (see `LICENSE`); documentation and content under Creative Commons Attribution 4.0 International (CC-BY-4.0, see `LICENSE-CONTENT.md`). The repository is public.
