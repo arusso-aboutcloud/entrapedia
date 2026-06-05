@@ -80,6 +80,7 @@ const REPO_META = new Set([
   'readme.md', 'contributing.md', 'security.md', 'support.md',
   'code_of_conduct.md', 'code-of-conduct.md', 'changelog.md', 'change-log.md',
   'thirdpartynotices.md', 'third-party-notices.md', 'license.md', 'licence.md',
+  'agents.md', 'notices.md', 'notfound.md',
 ]);
 
 // Ingest only .md and content .yml (e.g. faq.yml). Skip dot-dirs (.github),
@@ -288,15 +289,25 @@ async function runIngestion(env, opts = {}) {
     sub: opts.subBudget && opts.subBudget > 0 ? opts.subBudget : SUBREQUEST_BUDGET,
   };
   const only = opts.source || null;
+  // Rotation-with-resumption: the scheduled run passes a day-of-year startIndex
+  // so the per-run budget leads with a different source each day (fairness),
+  // wrapping through the rest if budget remains. Each source resumes its own
+  // persisted sync_state frontier -- rotation never resets a source's progress.
+  const n = SOURCES.length;
+  let start = 0;
+  if (Number.isInteger(opts.startIndex)) start = ((opts.startIndex % n) + n) % n;
+
   const summary = {
     started_at: Math.floor(Date.now() / 1000),
+    start_index: start,
     max_files: budget.files,
     subrequest_budget: budget.sub,
     ai_calls: 0, // invariant: this chunk performs zero Workers AI calls
     sources: {},
   };
 
-  for (const source of SOURCES) {
+  for (let k = 0; k < n; k++) {
+    const source = SOURCES[(start + k) % n];
     if (only && source.key !== only) continue;
     if (budget.files <= 0 || budget.sub < 6) { summary.sources[source.key] = { status: 'deferred' }; continue; }
     try {
@@ -312,9 +323,13 @@ async function runIngestion(env, opts = {}) {
 }
 
 export default {
-  // Daily Tier-A reconcile (cron expression lives in wrangler.toml).
+  // Daily Tier-A reconcile (cron expression lives in wrangler.toml). The lead
+  // source rotates by day-of-year so every source gets the budget over time;
+  // each resumes its own sync_state frontier.
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(runIngestion(env));
+    const now = new Date();
+    const dayOfYear = Math.floor((now.getTime() - Date.UTC(now.getUTCFullYear(), 0, 0)) / 86400000);
+    ctx.waitUntil(runIngestion(env, { startIndex: dayOfYear }));
   },
 
   // Authenticated manual trigger: POST/GET /run with Bearer TRIGGER_SECRET.

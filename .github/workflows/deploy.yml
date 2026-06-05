@@ -32,6 +32,10 @@ on:
         description: 'Limit to one source key (blank = all)'
         type: string
         default: ''
+      sleep_s:
+        description: 'Seconds to sleep between /run iterations (rate pacing)'
+        type: string
+        default: '6'
   push:
     branches: [main]
     paths:
@@ -89,6 +93,7 @@ jobs:
         if: ${{ inputs.run_backfill == true }}
         env:
           TRIGGER_SECRET: ${{ secrets.TRIGGER_SECRET }}
+          GH_DOCS_TOKEN: ${{ secrets.GH_DOCS_TOKEN }}
         run: |
           set -euo pipefail
           URL="${WORKER_URL:-}"
@@ -97,13 +102,25 @@ jobs:
             exit 1
           fi
           N="${{ inputs.iterations }}"
+          SLEEP="${{ inputs.sleep_s }}"
           Q="max=${{ inputs.max }}"
           SRC="${{ inputs.source }}"
           if [ -n "$SRC" ]; then Q="$Q&source=$SRC"; fi
-          echo "Backfilling $URL/run?$Q  x$N"
+          echo "Backfilling $URL/run?$Q  x$N (sleep ${SLEEP}s, rate-guarded)"
           for i in $(seq 1 "$N"); do
-            echo "=== run $i/$N ==="
-            curl -fsS -H "Authorization: Bearer $TRIGGER_SECRET" "$URL/run?$Q"
-            echo
-            sleep 3
+            # GitHub REST rate guard (worker uses GH_DOCS_TOKEN): pause near exhaustion.
+            if [ $(( (i - 1) % 25 )) -eq 0 ]; then
+              rl=$(curl -fsS -H "Authorization: Bearer $GH_DOCS_TOKEN" https://api.github.com/rate_limit || echo '{}')
+              rem=$(echo "$rl" | jq -r '.resources.core.remaining // 5000')
+              echo "[rate] core remaining=$rem"
+              if [ "$rem" -lt 600 ]; then
+                reset=$(echo "$rl" | jq -r '.resources.core.reset // 0')
+                now=$(date +%s); wait=$(( reset - now + 5 )); [ "$wait" -lt 5 ] && wait=60
+                echo "[rate] low ($rem); backing off ${wait}s until reset"; sleep "$wait"
+              fi
+            fi
+            resp=$(curl -fsS -H "Authorization: Bearer $TRIGGER_SECRET" "$URL/run?$Q")
+            echo "$resp" | jq -c '.sources | to_entries[0].value | {src:.source, created, updated, frontier, status}' 2>/dev/null \
+              || { echo "non-json or error:"; echo "$resp" | head -c 200; }
+            sleep "$SLEEP"
           done
