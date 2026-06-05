@@ -74,17 +74,30 @@ const SOURCES = [
 
 // ---- filters (strict) ----------------------------------------------------
 
+// Repo-meta filenames that are not documentation content. Excluded at the repo
+// root (where they live); a same-named page inside the doc tree is still kept.
+const REPO_META = new Set([
+  'readme.md', 'contributing.md', 'security.md', 'support.md',
+  'code_of_conduct.md', 'code-of-conduct.md', 'changelog.md', 'change-log.md',
+  'thirdpartynotices.md', 'third-party-notices.md', 'license.md', 'licence.md',
+]);
+
 // Ingest only .md and content .yml (e.g. faq.yml). Skip dot-dirs (.github),
-// /includes/ snippet fragments, TOC/breadcrumb/config YAML, and everything else
-// (media, .json, binaries).
+// /includes/ snippet fragments, root repo-meta files, TOC/breadcrumb/config and
+// root-level build YAML, and everything else (media, .json, binaries).
 function isContentFile(path) {
   const l = path.toLowerCase();
   const segs = l.split('/');
   if (segs.some((s) => s.startsWith('.'))) return false; // .github, .vscode, ...
   if (l.includes('/includes/')) return false;
   const base = segs[segs.length - 1];
+  const atRoot = segs.length === 1;
+  if (atRoot && REPO_META.has(base)) return false;        // root README/LICENSE/etc.
   if (l.endsWith('.md')) return true;
   if (l.endsWith('.yml')) {
+    // Content YAML must live in the doc tree (below the repo root); this drops
+    // root-level build/config YAML such as cabgen-bootstrap.yml.
+    if (atRoot) return false;
     if (base === 'toc.yml') return false;
     if (l.includes('breadcrumb')) return false;
     if (base.endsWith('.config.yml')) return false;

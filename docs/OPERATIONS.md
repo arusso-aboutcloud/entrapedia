@@ -109,7 +109,11 @@ so the crawl stays self-maintaining against upstream repo reorganisation.
 3. Walk the directory frontier (descend-on-truncation), enumerating in-scope
    files. Filters: `.md` and content `.yml` only; skip dot-dirs (`.github`),
    `/includes/`, `toc.yml`/breadcrumb/`*.config.yml`, media, `.json`, binaries.
-   `azure-docs-aad` is additionally scoped to `articles/active-directory/` and
+   Repo-meta files at the repo root (`README`, `CONTRIBUTING`, `SECURITY`,
+   `CODE_OF_CONDUCT`, `CHANGELOG`, `ThirdPartyNotices`, `LICENSE`) are excluded,
+   and content `.yml` is restricted to the doc tree (below the repo root), which
+   drops root build YAML such as `cabgen-bootstrap.yml`. `azure-docs-aad` is
+   additionally scoped to `articles/active-directory/` and
    `articles/active-directory-b2c/` and tagged `layer=legacy`.
 4. Diff each file's git blob SHA against `documents.content_hash`; fetch only
    changed/new bodies (via `raw.githubusercontent.com`).
