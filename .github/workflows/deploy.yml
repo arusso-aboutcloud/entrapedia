@@ -119,7 +119,9 @@ jobs:
                 echo "[rate] low ($rem); backing off ${wait}s until reset"; sleep "$wait"
               fi
             fi
-            resp=$(curl -fsS -H "Authorization: Bearer $TRIGGER_SECRET" "$URL/run?$Q")
+            resp=$(curl -sS --retry 4 --retry-delay 3 --retry-all-errors \
+              -H "Authorization: Bearer $TRIGGER_SECRET" "$URL/run?$Q" || true)
+            if [ -z "$resp" ]; then echo "iter $i: request failed after retries, continuing"; sleep "$SLEEP"; continue; fi
             echo "$resp" | jq -c '.sources | to_entries[0].value | {src:.source, created, updated, frontier, status}' 2>/dev/null \
               || { echo "non-json or error:"; echo "$resp" | head -c 200; }
             sleep "$SLEEP"
