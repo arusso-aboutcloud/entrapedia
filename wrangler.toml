@@ -40,20 +40,28 @@ database_id = "fcf6aeff-74d0-4978-9df2-49ef344c6dd6"
 binding = "CORPUS"
 bucket_name = "entrapedia-corpus"
 
-# --- Vectorize: embeddings for RAG retrieval -----------------------------
+# The ingestion worker (chunk 3a) binds only D1 + R2 (what it uses). The
+# Vectorize, KV, and Workers AI bindings below are kept as commented stubs with
+# their real IDs and are re-enabled by the chunk that first uses them:
+#   - Vectorize + Workers AI: chunk 3b (embedding).
+#   - KV (answer cache):      chunk 4 (RAG / answer cache).
+# Binding an unused resource also forces its write scope onto the deploy token
+# (e.g. KV write), so we declare bindings only when a worker actually needs them.
+
+# --- Vectorize: embeddings for RAG retrieval (chunk 3b) ------------------
 # Embedding model @cf/baai/bge-base-en-v1.5 -> 768 dimensions, float32; index
 # metric cosine. The index dimension (768) MUST match this model. Trust
 # separation is by metadata filter (trust / source / content_type), not by
 # separate indexes or namespaces.
-[[vectorize]]
-binding = "VECTORIZE"
-index_name = "entrapedia-chunks"
+# [[vectorize]]
+# binding = "VECTORIZE"
+# index_name = "entrapedia-chunks"
 
-# --- KV: answer cache (normalized-question keyed) ------------------------
-[[kv_namespaces]]
-binding = "ANSWER_CACHE"
-id = "7f1f60eb51c54429b81a363a8b89eb9a"
+# --- KV: answer cache, normalized-question keyed (chunk 4) ---------------
+# [[kv_namespaces]]
+# binding = "ANSWER_CACHE"
+# id = "7f1f60eb51c54429b81a363a8b89eb9a"
 
-# --- Workers AI: embeddings + (later, post-chunk-4) grounded generation --
-[ai]
-binding = "AI"
+# --- Workers AI: embeddings + (later) grounded generation (chunk 3b) -----
+# [ai]
+# binding = "AI"
