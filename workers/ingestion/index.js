@@ -39,12 +39,6 @@ const MAX_FILES_PER_RUN = 25;
 // (1000). TUNABLE.
 const SUBREQUEST_BUDGET = 45;
 
-// A directory whose recursive listing exceeds this many entries is descended
-// per-subdirectory (like a truncated tree) instead of filtered whole every run.
-// This bounds per-run CPU so we stay under the Workers Free CPU-time limit
-// (error 1102) on repos with very large directories. TUNABLE.
-const LARGE_TREE = 1200;
-
 const GH_API = 'https://api.github.com';
 const GH_RAW = 'https://raw.githubusercontent.com';
 
@@ -241,21 +235,18 @@ async function processSource(env, source, budget) {
   // Walk the directory frontier, fetching changed blobs as we discover them.
   while (ws.frontier.length > 0 && budget.files > 0 && budget.sub > 4) {
     const dir = ws.frontier[0];
-    const t = await ghJson(env, treeUrl(source, dir.sha, true), budget);
-
+    // Always list ONE directory level non-recursively and enqueue child dirs.
+    // A recursive call on a large/truncated tree returns a multi-MB JSON whose
+    // parse alone can exceed the Workers Free CPU limit (error 1102), so we never
+    // fetch recursively -- we descend the tree one level per visit. Bounded
+    // per-run CPU at the cost of more (small) tree calls; the frontier persists
+    // so the walk is fully resumable.
+    const t = await ghJson(env, treeUrl(source, dir.sha, false), budget);
     let blobs = [];
     let subdirs = [];
-    // Descend per-subdirectory when the tree is truncated OR simply too large to
-    // filter whole each run (CPU bound). Either way we list this level
-    // non-recursively and enqueue child directories.
-    if (t.truncated || (Array.isArray(t.tree) && t.tree.length > LARGE_TREE)) {
-      const t2 = await ghJson(env, treeUrl(source, dir.sha, false), budget);
-      for (const e of t2.tree) {
-        if (e.type === 'blob') blobs.push({ path: dir.prefix + e.path, sha: e.sha });
-        else if (e.type === 'tree') subdirs.push({ sha: e.sha, prefix: dir.prefix + e.path + '/' });
-      }
-    } else {
-      for (const e of t.tree) if (e.type === 'blob') blobs.push({ path: dir.prefix + e.path, sha: e.sha });
+    for (const e of t.tree) {
+      if (e.type === 'blob') blobs.push({ path: dir.prefix + e.path, sha: e.sha });
+      else if (e.type === 'tree') subdirs.push({ sha: e.sha, prefix: dir.prefix + e.path + '/' });
     }
     stat.examined += blobs.length;
 

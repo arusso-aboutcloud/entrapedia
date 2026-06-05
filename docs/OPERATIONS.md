@@ -89,20 +89,19 @@ A run stops when either cap is reached and persists progress; the next run
 resumes. To accelerate an initial backfill, trigger `/run` repeatedly (or
 shorten the cron) rather than raising the caps past the subrequest limit.
 
-### Tree truncation (why the walk is what it is)
+### Tree walk (why it descends one level at a time)
 
 The GitHub Git Trees API **truncates large recursive trees** (~100k entries /
-7 MB). `microsoft-graph-docs-contrib` exceeds it — a single `?recursive=1` call
-silently returns a partial tree and would miss high-value pages (e.g. the Graph
-permissions reference). The worker therefore uses **descend-on-truncation**: one
-recursive tree call per directory, and only when a directory comes back
-`truncated: true` does it list that directory non-recursively and enqueue its
-child directories. The same per-subdirectory descent is also applied when a
-directory's recursive listing is merely **very large** (`> LARGE_TREE` entries),
-so no single run filters a huge listing repeatedly — this keeps per-run CPU under
-the Workers Free CPU-time limit (otherwise seen as `error 1102`). The
-pending-directory **frontier is persisted in `sync_state.last_etag`**, so a run
-capped mid-walk resumes the tree walk (not just the fetch step) on the next
+7 MB) — `microsoft-graph-docs-contrib` exceeds it, so a single `?recursive=1`
+call silently returns a partial tree and would miss high-value pages (e.g. the
+Graph permissions reference). Worse on the free tier, a recursive call on a large
+directory returns a multi-MB JSON whose **parse alone exceeds the Workers Free
+CPU-time limit** (`error 1102`). The worker therefore **never fetches
+recursively**: it lists **one directory level non-recursively per visit** and
+enqueues child directories, walking the tree breadth-first. This bounds per-run
+CPU and sidesteps truncation entirely, at the cost of more (small) tree calls.
+The pending-directory **frontier is persisted in `sync_state.last_etag`**, so a
+run capped mid-walk resumes the tree walk (not just the fetch step) on the next
 invocation. No content sub-paths are hardcoded,
 so the crawl stays self-maintaining against upstream repo reorganisation.
 
