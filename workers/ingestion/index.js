@@ -89,7 +89,7 @@ function isContentFile(path) {
   const l = path.toLowerCase();
   const segs = l.split('/');
   if (segs.some((s) => s.startsWith('.'))) return false; // .github, .vscode, ...
-  if (l.includes('/includes/')) return false;
+  if (segs.includes('includes')) return false;           // snippet fragments at any depth (incl. a repo-root includes/)
   const base = segs[segs.length - 1];
   const atRoot = segs.length === 1;
   if (atRoot && REPO_META.has(base)) return false;        // root README/LICENSE/etc.

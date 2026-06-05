@@ -1,0 +1,56 @@
+name: cleanup-r2
+
+# One-off ops tool: delete R2 objects under a key prefix (e.g. to purge content
+# that an earlier filter bug ingested). Manual dispatch only, gated by an
+# explicit confirm input. Uses the CF API with the CLOUDFLARE_API_TOKEN repo
+# secret. Pair with a D1 DELETE of the matching `documents` rows.
+
+on:
+  workflow_dispatch:
+    inputs:
+      prefix:
+        description: 'R2 key prefix to DELETE (e.g. graph-docs/includes/)'
+        type: string
+        required: true
+      confirm:
+        description: 'Type DELETE to confirm'
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  purge:
+    if: ${{ inputs.confirm == 'DELETE' }}
+    runs-on: ubuntu-latest
+    env:
+      CF_API: https://api.cloudflare.com/client/v4
+      ACCT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      BUCKET: entrapedia-corpus
+      PREFIX: ${{ inputs.prefix }}
+    steps:
+      - name: Delete objects under prefix
+        run: |
+          set -euo pipefail
+          cursor=""
+          total=0
+          while :; do
+            url="$CF_API/accounts/$ACCT/r2/buckets/$BUCKET/objects?per_page=1000&prefix=$PREFIX"
+            [ -n "$cursor" ] && url="$url&cursor=$cursor"
+            resp=$(curl -fsS -H "Authorization: Bearer $TOKEN" "$url")
+            keys=$(echo "$resp" | jq -r '.result[].key')
+            if [ -z "$keys" ]; then echo "no more objects"; break; fi
+            while IFS= read -r k; do
+              [ -z "$k" ] && continue
+              curl -fsS -X DELETE -H "Authorization: Bearer $TOKEN" \
+                "$CF_API/accounts/$ACCT/r2/buckets/$BUCKET/objects/$k" >/dev/null
+              total=$((total + 1))
+            done <<< "$keys"
+            trunc=$(echo "$resp" | jq -r '.result_info.is_truncated // false')
+            cursor=$(echo "$resp" | jq -r '.result_info.cursor // ""')
+            echo "batch done; running total=$total truncated=$trunc"
+            [ "$trunc" = "true" ] || break
+          done
+          echo "TOTAL DELETED: $total"

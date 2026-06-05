@@ -108,7 +108,9 @@ so the crawl stays self-maintaining against upstream repo reorganisation.
 2. No-op if the head is unchanged since the last completed walk.
 3. Walk the directory frontier (descend-on-truncation), enumerating in-scope
    files. Filters: `.md` and content `.yml` only; skip dot-dirs (`.github`),
-   `/includes/`, `toc.yml`/breadcrumb/`*.config.yml`, media, `.json`, binaries.
+   any `includes/` directory at any depth (snippet fragments, including a
+   repo-root `includes/`), `toc.yml`/breadcrumb/`*.config.yml`, media, `.json`,
+   binaries.
    Repo-meta files at the repo root (`README`, `CONTRIBUTING`, `SECURITY`,
    `CODE_OF_CONDUCT`, `CHANGELOG`, `ThirdPartyNotices`, `LICENSE`) are excluded,
    and content `.yml` is restricted to the doc tree (below the repo root), which
