@@ -39,6 +39,12 @@ const MAX_FILES_PER_RUN = 25;
 // (1000). TUNABLE.
 const SUBREQUEST_BUDGET = 45;
 
+// A directory whose recursive listing exceeds this many entries is descended
+// per-subdirectory (like a truncated tree) instead of filtered whole every run.
+// This bounds per-run CPU so we stay under the Workers Free CPU-time limit
+// (error 1102) on repos with very large directories. TUNABLE.
+const LARGE_TREE = 1200;
+
 const GH_API = 'https://api.github.com';
 const GH_RAW = 'https://raw.githubusercontent.com';
 
@@ -239,7 +245,10 @@ async function processSource(env, source, budget) {
 
     let blobs = [];
     let subdirs = [];
-    if (t.truncated) {
+    // Descend per-subdirectory when the tree is truncated OR simply too large to
+    // filter whole each run (CPU bound). Either way we list this level
+    // non-recursively and enqueue child directories.
+    if (t.truncated || (Array.isArray(t.tree) && t.tree.length > LARGE_TREE)) {
       const t2 = await ghJson(env, treeUrl(source, dir.sha, false), budget);
       for (const e of t2.tree) {
         if (e.type === 'blob') blobs.push({ path: dir.prefix + e.path, sha: e.sha });

@@ -97,9 +97,13 @@ silently returns a partial tree and would miss high-value pages (e.g. the Graph
 permissions reference). The worker therefore uses **descend-on-truncation**: one
 recursive tree call per directory, and only when a directory comes back
 `truncated: true` does it list that directory non-recursively and enqueue its
-child directories. The pending-directory **frontier is persisted in
-`sync_state.last_etag`**, so a run capped mid-walk resumes the tree walk (not
-just the fetch step) on the next invocation. No content sub-paths are hardcoded,
+child directories. The same per-subdirectory descent is also applied when a
+directory's recursive listing is merely **very large** (`> LARGE_TREE` entries),
+so no single run filters a huge listing repeatedly — this keeps per-run CPU under
+the Workers Free CPU-time limit (otherwise seen as `error 1102`). The
+pending-directory **frontier is persisted in `sync_state.last_etag`**, so a run
+capped mid-walk resumes the tree walk (not just the fetch step) on the next
+invocation. No content sub-paths are hardcoded,
 so the crawl stays self-maintaining against upstream repo reorganisation.
 
 ### What a run does (per source)
