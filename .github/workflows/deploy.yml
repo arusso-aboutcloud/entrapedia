@@ -1,0 +1,109 @@
+name: deploy
+
+# Deploys the Entrapedia ingestion worker to Cloudflare and provisions its
+# runtime secrets. Uses no marketplace actions (plain git clone of the public
+# repo + pinned npx wrangler), so there are no third-party actions to SHA-pin.
+#
+# Required repository secrets:
+#   CLOUDFLARE_API_TOKEN   - Cloudflare API token (Workers Scripts:Edit + D1/R2/
+#                            KV/Vectorize/Workers AI:Edit, Account Settings:Read).
+#   GH_DOCS_TOKEN          - GitHub fine-grained PAT, Public repositories
+#                            (read-only). Pushed onto the worker as GITHUB_TOKEN.
+#   TRIGGER_SECRET         - shared secret guarding the worker's /run trigger.
+# Recommended:
+#   CLOUDFLARE_ACCOUNT_ID  - account id (kept out of the committed wrangler.toml).
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_backfill:
+        description: 'Run the backfill (curl /run) after deploy'
+        type: boolean
+        default: false
+      iterations:
+        description: 'Number of /run iterations'
+        type: string
+        default: '6'
+      max:
+        description: 'MAX files per /run'
+        type: string
+        default: '25'
+      source:
+        description: 'Limit to one source key (blank = all)'
+        type: string
+        default: ''
+  push:
+    branches: [main]
+    paths:
+      - 'workers/**'
+      - 'wrangler.toml'
+      - 'schema/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: entrapedia-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      WRANGLER: npx --yes wrangler@4.98.0
+    steps:
+      - name: Checkout (public repo, no marketplace action)
+        run: git clone --depth 1 "https://github.com/${{ github.repository }}" repo
+
+      - name: Deploy worker
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          OUT=$($WRANGLER deploy 2>&1) || { echo "$OUT"; exit 1; }
+          echo "$OUT"
+          URL=$(printf '%s\n' "$OUT" | grep -oE 'https://[a-z0-9.-]+\.workers\.dev' | head -1 || true)
+          echo "WORKER_URL=$URL" >> "$GITHUB_ENV"
+          echo "Deployed at: ${URL:-<no workers.dev url>}"
+
+      - name: Provision worker secrets
+        working-directory: repo
+        env:
+          GH_DOCS_TOKEN: ${{ secrets.GH_DOCS_TOKEN }}
+          TRIGGER_SECRET: ${{ secrets.TRIGGER_SECRET }}
+        run: |
+          set -euo pipefail
+          if [ -n "${GH_DOCS_TOKEN:-}" ]; then
+            printf '%s' "$GH_DOCS_TOKEN" | $WRANGLER secret put GITHUB_TOKEN
+          else
+            echo "GH_DOCS_TOKEN repo secret not set; worker will fall back to unauthenticated GitHub (60/hr)."
+          fi
+          if [ -n "${TRIGGER_SECRET:-}" ]; then
+            printf '%s' "$TRIGGER_SECRET" | $WRANGLER secret put TRIGGER_SECRET
+          else
+            echo "TRIGGER_SECRET repo secret not set; the /run trigger will reject all requests."
+          fi
+
+      - name: Backfill (manual dispatch only)
+        if: ${{ inputs.run_backfill == true }}
+        env:
+          TRIGGER_SECRET: ${{ secrets.TRIGGER_SECRET }}
+        run: |
+          set -euo pipefail
+          URL="${WORKER_URL:-}"
+          if [ -z "$URL" ]; then
+            echo "No workers.dev URL captured from deploy; cannot backfill over HTTP. (Cron will still run.)"
+            exit 1
+          fi
+          N="${{ inputs.iterations }}"
+          Q="max=${{ inputs.max }}"
+          SRC="${{ inputs.source }}"
+          if [ -n "$SRC" ]; then Q="$Q&source=$SRC"; fi
+          echo "Backfilling $URL/run?$Q  x$N"
+          for i in $(seq 1 "$N"); do
+            echo "=== run $i/$N ==="
+            curl -fsS -H "Authorization: Bearer $TRIGGER_SECRET" "$URL/run?$Q"
+            echo
+            sleep 3
+          done

@@ -31,6 +31,26 @@ npx wrangler deploy
 `wrangler.toml` wires `main`, the D1/R2 bindings, and the cron. (The `AI` and
 `VECTORIZE` bindings are declared for later chunks and are unused here.)
 
+### CI deploy (GitHub Actions)
+
+`.github/workflows/deploy.yml` deploys on push to `main` (paths `workers/**`,
+`wrangler.toml`, `schema/**`) and on manual dispatch. It uses no marketplace
+actions (plain `git clone` of the public repo + pinned `npx wrangler`), so there
+is nothing to SHA-pin. Required repository secrets:
+
+| Repo secret | Purpose |
+|---|---|
+| `CLOUDFLARE_API_TOKEN` | Deploy + set worker secrets (Workers Scripts:Edit + D1/R2/KV/Vectorize/Workers AI:Edit, Account Settings:Read). |
+| `GH_DOCS_TOKEN` | GitHub fine-grained PAT, *Public repositories (read-only)*. The workflow pushes it onto the worker as the `GITHUB_TOKEN` secret. |
+| `TRIGGER_SECRET` | Guards the worker's `/run` trigger; the workflow also uses it to drive the backfill. |
+| `CLOUDFLARE_ACCOUNT_ID` | Recommended (kept out of the committed `wrangler.toml`); lets wrangler resolve the account unambiguously. |
+
+Manual dispatch with a backfill, e.g.:
+
+```sh
+gh workflow run deploy.yml -f run_backfill=true -f iterations=8 -f source=graph-docs
+```
+
 ### Cron
 
 `crons = ["0 6 * * *"]` — a daily 06:00 UTC Tier-A reconcile. Because each run is
