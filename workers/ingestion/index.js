@@ -172,11 +172,16 @@ async function fetchBody(env, source, branch, path, budget) {
 
 // ---- store helpers -------------------------------------------------------
 
-async function loadKnownHashes(env, sourceKey, budget) {
+// Known content hashes for the DIRECT files of one directory only (not the whole
+// source) -- keeps the in-memory set and D1 response small so per-run CPU stays
+// under the Workers Free limit even on directories with thousands of files.
+async function loadKnownHashesForDir(env, sourceKey, dirPrefix, budget) {
   budget.sub--;
+  const like = `${sourceKey}:${dirPrefix}%`;
+  const nested = `${sourceKey}:${dirPrefix}%/%`;
   const { results } = await env.DB.prepare(
-    'SELECT doc_id, content_hash FROM documents WHERE source = ?'
-  ).bind(sourceKey).all();
+    'SELECT doc_id, content_hash FROM documents WHERE source = ? AND doc_id LIKE ? AND doc_id NOT LIKE ?'
+  ).bind(sourceKey, like, nested).all();
   const m = new Map();
   for (const r of results) m.set(r.doc_id, r.content_hash);
   return m;
@@ -230,8 +235,6 @@ async function processSource(env, source, budget) {
     ws = { headSha, frontier: await seedFrontier(env, source, branch, budget), done: false };
   }
 
-  const known = await loadKnownHashes(env, source.key, budget);
-
   // Walk the directory frontier, fetching changed blobs as we discover them.
   while (ws.frontier.length > 0 && budget.files > 0 && budget.sub > 4) {
     const dir = ws.frontier[0];
@@ -250,6 +253,8 @@ async function processSource(env, source, budget) {
     }
     stat.examined += blobs.length;
 
+    // Known hashes for THIS directory's direct files only (bounded CPU).
+    const known = await loadKnownHashesForDir(env, source.key, dir.prefix, budget);
     const changed = blobs.filter(
       (b) => inScope(source, b.path) && known.get(`${source.key}:${b.path}`) !== b.sha
     );
@@ -260,7 +265,6 @@ async function processSource(env, source, budget) {
       const body = await fetchBody(env, source, branch, b.path, budget);
       const existed = known.has(`${source.key}:${b.path}`);
       await storeDoc(env, source, branch, b, body, now, budget);
-      known.set(`${source.key}:${b.path}`, b.sha);
       budget.files--;
       stat.fetched++;
       if (existed) stat.updated++; else stat.created++;
