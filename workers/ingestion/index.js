@@ -28,6 +28,8 @@
  *   TRIGGER_SECRET - shared secret guarding the manual POST/GET /run trigger.
  */
 
+import { chunkDocument } from './chunker.mjs';
+
 // ---- tunable run budgets -------------------------------------------------
 
 // Per-run changed-file cap (bodies fetched + stored per invocation). TUNABLE.
@@ -38,6 +40,24 @@ const MAX_FILES_PER_RUN = 25;
 // under it and let the resumable walk continue next run. Raise on Workers Paid
 // (1000). TUNABLE.
 const SUBREQUEST_BUDGET = 45;
+
+// ---- embedding budgets (chunk 3b) ----------------------------------------
+
+const EMBED_MODEL = '@cf/baai/bge-base-en-v1.5'; // 768-dim, max 512 input tokens
+const EMBED_MAX_TOKENS = 512;                    // model input cap; longer is silently dropped
+const NEURONS_PER_MTOKEN = 6058;                 // @cf/baai/bge-base-en-v1.5 (Cloudflare pricing)
+
+// Per-DAY (UTC) neuron cap. ~1k under the 10k free-tier ceiling for headroom.
+// The hard free-tier reset is 00:00 UTC; we hard-stop the day's embedding here.
+// TUNABLE.
+const EMBED_NEURON_BUDGET = 9000;
+
+// Per-INVOCATION subrequest cap (Workers Free allows 50). Embedding batches a
+// whole doc's chunks into one AI call + one Vectorize upsert + one D1 batch, so
+// this bounds docs-per-invocation; many invocations/day fill the neuron budget.
+// TUNABLE.
+const EMBED_SUBREQUEST_BUDGET = 45;
+const EMBED_DOCS_PER_RUN = 40; // safety cap on docs selected per invocation
 
 const GH_API = 'https://api.github.com';
 const GH_RAW = 'https://raw.githubusercontent.com';
@@ -339,21 +359,166 @@ async function runIngestion(env, opts = {}) {
   return summary;
 }
 
+// ---- embedding pass (chunk 3b) -------------------------------------------
+
+// Priority-tier SQL fragments over doc_id (instr/substr only -- no LIKE, to
+// avoid SQLite "pattern too complex"). P1 front-loads the table-heavy, high-value
+// content; P3 is the long tail.
+const TIER1_SQL = `(
+  doc_id = 'graph-docs:concepts/permissions-reference.md'
+  OR instr(doc_id, 'graph-docs:api-reference/') = 1
+  OR (instr(doc_id, 'entra-docs:') = 1 AND (
+       instr(doc_id, 'conditional-access') > 0 OR instr(doc_id, 'sign-in') > 0
+       OR instr(doc_id, 'signin') > 0 OR instr(doc_id, 'app-registration') > 0
+       OR instr(doc_id, 'register-app') > 0 OR instr(doc_id, 'enterprise-app') > 0
+       OR instr(doc_id, 'authentication') > 0 OR instr(doc_id, 'identity-protection') > 0
+       OR instr(doc_id, 'identity-platform') > 0))
+)`;
+const TIER3_SQL = `(instr(doc_id, 'entra-powershell-docs:') = 1 OR instr(doc_id, 'azure-docs-aad:') = 1)`;
+
+function chunkNeurons(tokenCount) {
+  return Math.ceil(Math.min(tokenCount, EMBED_MAX_TOKENS) / 1e6 * NEURONS_PER_MTOKEN);
+}
+
+// Deterministic 48-hex-char Vectorize id from the chunk_id (keeps ids short and
+// valid regardless of how long the doc path is).
+async function vectorId(chunkId) {
+  const h = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(chunkId));
+  return [...new Uint8Array(h)].slice(0, 24).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function loadEmbedBudget(env) {
+  const today = new Date().toISOString().slice(0, 10);
+  const row = await env.DB.prepare("SELECT last_etag FROM sync_state WHERE source = '@embed'").first();
+  if (row && row.last_etag) {
+    try { const p = JSON.parse(row.last_etag); if (p.date === today) return p; } catch (_) { /* reset */ }
+  }
+  return { date: today, neurons: 0 };
+}
+async function saveEmbedBudget(env, st) {
+  await env.DB.prepare(
+    `INSERT INTO sync_state (source, last_run_at, last_cursor, last_etag, status)
+     VALUES ('@embed', ?1, ?2, ?3, 'embedding')
+     ON CONFLICT(source) DO UPDATE SET last_run_at = ?1, last_cursor = ?2, last_etag = ?3, status = 'embedding'`
+  ).bind(Math.floor(Date.now() / 1000), st.date, JSON.stringify(st)).run();
+}
+
+// Pick the next batch of not-yet-embedded docs, highest priority tier first.
+async function selectEmbedDocs(env, limit, budget) {
+  const cols = 'doc_id, source, content_type, trust, layer';
+  const tiers = [
+    [1, `${cols} FROM documents WHERE embedded_at IS NULL AND ${TIER1_SQL} LIMIT ?`],
+    [2, `${cols} FROM documents WHERE embedded_at IS NULL AND (instr(doc_id,'graph-docs:')=1 OR instr(doc_id,'entra-docs:')=1) AND NOT ${TIER1_SQL} LIMIT ?`],
+    [3, `${cols} FROM documents WHERE embedded_at IS NULL AND ${TIER3_SQL} ORDER BY CASE WHEN instr(doc_id,'entra-powershell-docs:')=1 THEN 0 ELSE 1 END LIMIT ?`],
+  ];
+  for (const [tier, sql] of tiers) {
+    budget.sub--;
+    const r = await env.DB.prepare(`SELECT ${sql}`).bind(limit).all();
+    if (r.results.length) return { tier, docs: r.results };
+  }
+  return { tier: null, docs: [] };
+}
+
+async function embedDoc(env, doc, now, budget, stat) {
+  const r2Key = doc.doc_id.slice(doc.doc_id.indexOf(':') + 1);
+  const fullKey = `${doc.source}/${r2Key}`;
+  budget.sub--;
+  const obj = await env.CORPUS.get(fullKey);
+  if (!obj) { stat.missing = (stat.missing || 0) + 1; return; }
+  const body = await obj.text();
+  const meta = { doc_id: doc.doc_id, source: doc.source, trust: doc.trust, content_type: doc.content_type, layer: doc.layer, r2_key: fullKey };
+  const chunks = chunkDocument(body, meta);
+
+  budget.sub--;
+  const existing = await env.DB.prepare('SELECT chunk_index FROM chunks WHERE doc_id = ?').bind(doc.doc_id).all();
+  const done = new Set(existing.results.map((r) => r.chunk_index));
+  const todo = chunks.filter((c) => !done.has(c.chunk_index));
+
+  if (todo.length) {
+    const texts = todo.map((c) => (c.token_count > EMBED_MAX_TOKENS ? c.text.slice(0, 2000) : c.text));
+    budget.sub--;
+    const emb = await env.AI.run(EMBED_MODEL, { text: texts });
+    const vectors = emb.data;
+    const vrows = [];
+    const inserts = [];
+    for (let i = 0; i < todo.length; i++) {
+      const c = todo[i];
+      const chunkId = `${c.doc_id}#${c.chunk_index}`;
+      const vid = await vectorId(chunkId);
+      const md = { trust: c.trust, source: c.source, content_type: c.content_type, layer: c.layer, doc_id: c.doc_id, chunk_index: c.chunk_index, r2_key: c.r2_key };
+      if (c.oversized_code) md.oversized_code = '1';
+      vrows.push({ id: vid, values: vectors[i], metadata: md });
+      inserts.push(env.DB.prepare(
+        `INSERT INTO chunks (chunk_id, doc_id, chunk_index, r2_key, vector_id, token_count)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+         ON CONFLICT(chunk_id) DO UPDATE SET vector_id = ?5, token_count = ?6`
+      ).bind(chunkId, c.doc_id, c.chunk_index, c.r2_key, vid, c.token_count));
+    }
+    budget.sub--;
+    await env.VECTORIZE.upsert(vrows);
+    budget.sub--;
+    await env.DB.batch(inserts);
+    for (const c of todo) { const n = chunkNeurons(c.token_count); budget.neurons += n; stat.neurons += n; }
+    stat.chunks += todo.length;
+    if (todo.some((c) => c.oversized_code)) stat.oversized_code += todo.filter((c) => c.oversized_code).length;
+  }
+  // mark doc embedded (all its chunks now present)
+  budget.sub--;
+  await env.DB.prepare('UPDATE documents SET embedded_at = ? WHERE doc_id = ?').bind(now, doc.doc_id).run();
+  stat.docs++;
+}
+
+async function runEmbedding(env, opts = {}) {
+  const now = Math.floor(Date.now() / 1000);
+  const dailyCap = opts.neuronBudget && opts.neuronBudget > 0 ? opts.neuronBudget : EMBED_NEURON_BUDGET;
+  const budget = { sub: opts.subBudget && opts.subBudget > 0 ? opts.subBudget : EMBED_SUBREQUEST_BUDGET, neurons: 0 };
+  const stat = { ai_model: EMBED_MODEL, tier: null, docs: 0, chunks: 0, neurons: 0, oversized_code: 0, status: 'ok' };
+
+  budget.sub--;
+  const st = await loadEmbedBudget(env);
+  stat.date = st.date;
+  stat.neurons_today_before = st.neurons;
+  stat.daily_cap = dailyCap;
+  if (st.neurons >= dailyCap) { stat.status = 'daily_budget_reached'; stat.neurons_today_after = st.neurons; return stat; }
+
+  const sel = await selectEmbedDocs(env, opts.docs && opts.docs > 0 ? opts.docs : EMBED_DOCS_PER_RUN, budget);
+  stat.tier = sel.tier;
+  if (!sel.docs.length) { stat.status = 'all_embedded'; stat.neurons_today_after = st.neurons; return stat; }
+
+  for (const doc of sel.docs) {
+    if (budget.sub < 8) { stat.status = 'subrequest_budget'; break; }
+    if (st.neurons + budget.neurons >= dailyCap) { stat.status = 'daily_budget_reached'; break; }
+    try { await embedDoc(env, doc, now, budget, stat); }
+    catch (e) { stat.errors = (stat.errors || 0) + 1; stat.last_error = String(e).slice(0, 200); }
+  }
+
+  st.neurons += budget.neurons;
+  await saveEmbedBudget(env, st);
+  stat.neurons_today_after = st.neurons;
+  stat.subrequests_remaining = budget.sub;
+  return stat;
+}
+
 export default {
-  // Daily Tier-A reconcile (cron expression lives in wrangler.toml). The lead
-  // source rotates by day-of-year so every source gets the budget over time;
-  // each resumes its own sync_state frontier.
+  // Cron handler. The daily 06:00 UTC trigger runs the Tier-A ingestion reconcile
+  // (lead source rotates by day-of-year). Any other (more frequent) cron runs the
+  // embedding pass, which self-throttles against the daily neuron budget.
   async scheduled(event, env, ctx) {
-    const now = new Date();
-    const dayOfYear = Math.floor((now.getTime() - Date.UTC(now.getUTCFullYear(), 0, 0)) / 86400000);
-    ctx.waitUntil(runIngestion(env, { startIndex: dayOfYear }));
+    if (event.cron === '0 6 * * *') {
+      const now = new Date();
+      const dayOfYear = Math.floor((now.getTime() - Date.UTC(now.getUTCFullYear(), 0, 0)) / 86400000);
+      ctx.waitUntil(runIngestion(env, { startIndex: dayOfYear }));
+    } else {
+      ctx.waitUntil(runEmbedding(env));
+    }
   },
 
-  // Authenticated manual trigger: POST/GET /run with Bearer TRIGGER_SECRET.
-  // Optional query params: ?source=<key>&max=<n>&sub=<n>. No other path is served.
+  // Authenticated manual triggers (Bearer TRIGGER_SECRET):
+  //   /run    -> ingestion (?source=&max=&sub=)
+  //   /embed  -> embedding pass (?docs=&sub=&neurons= per-call daily-cap override)
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (url.pathname !== '/run') return new Response('Not found', { status: 404 });
+    if (url.pathname !== '/run' && url.pathname !== '/embed') return new Response('Not found', { status: 404 });
 
     const auth = request.headers.get('Authorization') || '';
     const provided = auth.startsWith('Bearer ') ? auth.slice(7).trim() : (url.searchParams.get('key') || '');
@@ -361,17 +526,27 @@ export default {
       return new Response('Unauthorized', { status: 401 });
     }
 
-    const opts = {};
-    const max = parseInt(url.searchParams.get('max') || '', 10);
-    if (Number.isFinite(max) && max > 0) opts.max = max;
-    const sub = parseInt(url.searchParams.get('sub') || '', 10);
-    if (Number.isFinite(sub) && sub > 0) opts.subBudget = sub;
-    const src = url.searchParams.get('source');
-    if (src) opts.source = src;
+    let summary;
+    if (url.pathname === '/embed') {
+      const opts = {};
+      const docs = parseInt(url.searchParams.get('docs') || '', 10);
+      if (Number.isFinite(docs) && docs > 0) opts.docs = docs;
+      const sub = parseInt(url.searchParams.get('sub') || '', 10);
+      if (Number.isFinite(sub) && sub > 0) opts.subBudget = sub;
+      const neurons = parseInt(url.searchParams.get('neurons') || '', 10);
+      if (Number.isFinite(neurons) && neurons > 0) opts.neuronBudget = neurons;
+      summary = await runEmbedding(env, opts);
+    } else {
+      const opts = {};
+      const max = parseInt(url.searchParams.get('max') || '', 10);
+      if (Number.isFinite(max) && max > 0) opts.max = max;
+      const sub = parseInt(url.searchParams.get('sub') || '', 10);
+      if (Number.isFinite(sub) && sub > 0) opts.subBudget = sub;
+      const src = url.searchParams.get('source');
+      if (src) opts.source = src;
+      summary = await runIngestion(env, opts);
+    }
 
-    const summary = await runIngestion(env, opts);
-    return new Response(JSON.stringify(summary, null, 2), {
-      headers: { 'Content-Type': 'application/json' },
-    });
+    return new Response(JSON.stringify(summary, null, 2), { headers: { 'Content-Type': 'application/json' } });
   },
 };

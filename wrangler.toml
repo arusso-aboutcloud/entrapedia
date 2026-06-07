@@ -4,14 +4,13 @@
 # secrets and are committed intentionally. The account ID and API tokens are
 # NOT in this file — they live in Wrangler secrets / .dev.vars.
 #
-# Storage resources were created and wired in CHUNK 2. The ingestion worker
-# (CHUNK 3a) is wired below: `main` points at workers/ingestion and the daily
-# Tier-A cron is active. The AI and VECTORIZE bindings are declared for later
-# chunks (3b/4) but are NOT used by the ingestion worker.
+# Storage resources were created and wired in CHUNK 2. The worker (CHUNK 3a
+# ingestion + CHUNK 3b embedding) is wired below. AI + VECTORIZE are active as of
+# chunk 3b (embedding); KV stays a stub until chunk 4 (answer cache).
 #
 # Secrets (NOT committed; set via `wrangler secret put` — see docs/OPERATIONS.md):
 #   GITHUB_TOKEN   - GitHub token (public-repo read) for GitHub API + raw fetches.
-#   TRIGGER_SECRET - guards the manual /run trigger on the worker.
+#   TRIGGER_SECRET - guards the manual /run and /embed triggers on the worker.
 #
 # See DESIGN.md (sections 3, 4, 6) and ARCHITECTURE.md for the contracts these
 # bindings satisfy.
@@ -20,14 +19,15 @@ name = "entrapedia"
 main = "workers/ingestion/index.js"
 compatibility_date = "2026-06-04"
 
-# --- Scheduled re-indexing (Cron Triggers) -------------------------------
-# Daily Tier-A doc-corpus reconcile (DESIGN.md §3 / ARCHITECTURE.md). Per-run
-# work is capped (MAX_FILES_PER_RUN / SUBREQUEST_BUDGET) and resumable, so the
-# daily cadence drives an incremental backfill and then steady-state sync.
-# Change-feed (~4h) and weekly structured cadences arrive with their sources in
-# later chunks.
+# --- Scheduled triggers (Cron) -------------------------------------------
+# "0 6 * * *"      -> daily Tier-A ingestion reconcile (rotating lead source).
+# "7,27,47 * * * *" -> embedding pass, 3x/hour; each invocation embeds a few docs
+#                     and self-throttles against the daily EMBED_NEURON_BUDGET
+#                     (9000) so the corpus embeds incrementally without exceeding
+#                     the 10k-neuron/day free-tier ceiling. The scheduled handler
+#                     branches on event.cron.
 [triggers]
-crons = ["0 6 * * *"]
+crons = ["0 6 * * *", "7,27,47 * * * *"]
 
 # --- D1: index, metadata, source/trust/license fields, answer cache ------
 [[d1_databases]]
@@ -40,28 +40,22 @@ database_id = "fcf6aeff-74d0-4978-9df2-49ef344c6dd6"
 binding = "CORPUS"
 bucket_name = "entrapedia-corpus"
 
-# The ingestion worker (chunk 3a) binds only D1 + R2 (what it uses). The
-# Vectorize, KV, and Workers AI bindings below are kept as commented stubs with
-# their real IDs and are re-enabled by the chunk that first uses them:
-#   - Vectorize + Workers AI: chunk 3b (embedding).
-#   - KV (answer cache):      chunk 4 (RAG / answer cache).
-# Binding an unused resource also forces its write scope onto the deploy token
-# (e.g. KV write), so we declare bindings only when a worker actually needs them.
-
 # --- Vectorize: embeddings for RAG retrieval (chunk 3b) ------------------
 # Embedding model @cf/baai/bge-base-en-v1.5 -> 768 dimensions, float32; index
 # metric cosine. The index dimension (768) MUST match this model. Trust
 # separation is by metadata filter (trust / source / content_type), not by
 # separate indexes or namespaces.
-# [[vectorize]]
-# binding = "VECTORIZE"
-# index_name = "entrapedia-chunks"
+[[vectorize]]
+binding = "VECTORIZE"
+index_name = "entrapedia-chunks"
+
+# --- Workers AI: bge-base embeddings (chunk 3b; grounded generation later) -
+[ai]
+binding = "AI"
 
 # --- KV: answer cache, normalized-question keyed (chunk 4) ---------------
+# Re-enabled in chunk 4 (RAG / answer cache); the ingestion+embedding worker
+# does not use it, so it stays a stub (avoids forcing KV-write onto the token).
 # [[kv_namespaces]]
 # binding = "ANSWER_CACHE"
 # id = "7f1f60eb51c54429b81a363a8b89eb9a"
-
-# --- Workers AI: embeddings + (later) grounded generation (chunk 3b) -----
-# [ai]
-# binding = "AI"

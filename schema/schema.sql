@@ -8,7 +8,10 @@
 --   chunk 2  - initial tables (documents, chunks, answer_cache, sync_state).
 --   chunk 3a - add documents.layer (current|legacy). Applied to the live DB as:
 --                ALTER TABLE documents ADD COLUMN layer TEXT NOT NULL DEFAULT 'current';
---              The CREATE TABLE below includes the column for fresh databases.
+--   chunk 3b - add documents.embedded_at (NULL until all of a doc's chunks are
+--              embedded; the resumable embedding-pass cursor). Applied as:
+--                ALTER TABLE documents ADD COLUMN embedded_at INTEGER;
+--              The CREATE TABLE below includes both columns for fresh databases.
 
 CREATE TABLE IF NOT EXISTS documents (
   doc_id        TEXT PRIMARY KEY,
@@ -21,7 +24,8 @@ CREATE TABLE IF NOT EXISTS documents (
   attribution   TEXT,
   content_hash  TEXT,
   fetched_at    INTEGER,
-  updated_at    INTEGER
+  updated_at    INTEGER,
+  embedded_at   INTEGER                            -- NULL until embedded (chunk 3b)
 );
 
 CREATE TABLE IF NOT EXISTS chunks (
@@ -51,3 +55,5 @@ CREATE TABLE IF NOT EXISTS sync_state (
 
 CREATE INDEX IF NOT EXISTS idx_chunks_doc_id ON chunks(doc_id);
 CREATE INDEX IF NOT EXISTS idx_documents_source ON documents(source);
+-- Embedding-pass cursor: find not-yet-embedded docs quickly (chunk 3b).
+CREATE INDEX IF NOT EXISTS idx_documents_embedded ON documents(embedded_at);

@@ -33,9 +33,17 @@ on:
         type: string
         default: ''
       sleep_s:
-        description: 'Seconds to sleep between /run iterations (rate pacing)'
+        description: 'Seconds to sleep between iterations (rate pacing)'
         type: string
         default: '6'
+      mode:
+        description: 'Backfill endpoint: run (ingestion) or embed (chunk 3b)'
+        type: string
+        default: 'run'
+      docs:
+        description: 'Docs per /embed call (embed mode)'
+        type: string
+        default: '20'
   push:
     branches: [main]
     paths:
@@ -103,13 +111,19 @@ jobs:
           fi
           N="${{ inputs.iterations }}"
           SLEEP="${{ inputs.sleep_s }}"
-          Q="max=${{ inputs.max }}"
-          SRC="${{ inputs.source }}"
-          if [ -n "$SRC" ]; then Q="$Q&source=$SRC"; fi
-          echo "Backfilling $URL/run?$Q  x$N (sleep ${SLEEP}s, rate-guarded)"
+          MODE="${{ inputs.mode }}"
+          if [ "$MODE" = "embed" ]; then
+            ENDPOINT="/embed?docs=${{ inputs.docs }}"
+          else
+            Q="max=${{ inputs.max }}"
+            SRC="${{ inputs.source }}"
+            if [ -n "$SRC" ]; then Q="$Q&source=$SRC"; fi
+            ENDPOINT="/run?$Q"
+          fi
+          echo "Driving $URL$ENDPOINT  x$N (mode=$MODE, sleep ${SLEEP}s, rate-guarded)"
           for i in $(seq 1 "$N"); do
             # GitHub REST rate guard (worker uses GH_DOCS_TOKEN): pause near exhaustion.
-            if [ $(( (i - 1) % 25 )) -eq 0 ]; then
+            if [ "$MODE" != "embed" ] && [ $(( (i - 1) % 25 )) -eq 0 ]; then
               rl=$(curl -fsS -H "Authorization: Bearer $GH_DOCS_TOKEN" https://api.github.com/rate_limit || echo '{}')
               rem=$(echo "$rl" | jq -r '.resources.core.remaining // 5000')
               echo "[rate] core remaining=$rem"
@@ -120,9 +134,17 @@ jobs:
               fi
             fi
             resp=$(curl -sS --retry 4 --retry-delay 3 --retry-all-errors \
-              -H "Authorization: Bearer $TRIGGER_SECRET" "$URL/run?$Q" || true)
+              -H "Authorization: Bearer $TRIGGER_SECRET" "$URL$ENDPOINT" || true)
             if [ -z "$resp" ]; then echo "iter $i: request failed after retries, continuing"; sleep "$SLEEP"; continue; fi
-            echo "$resp" | jq -c '.sources | to_entries[0].value | {src:.source, created, frontier, status, error}' 2>/dev/null \
-              || { echo "non-json or error:"; echo "$resp" | head -c 300; }
+            if [ "$MODE" = "embed" ]; then
+              echo "$resp" | jq -c '{tier, docs, chunks, neurons, today:.neurons_today_after, cap:.daily_cap, status, errors, last_error}' 2>/dev/null \
+                || { echo "non-json or error:"; echo "$resp" | head -c 300; }
+              # stop early once the daily neuron budget is reached
+              if echo "$resp" | grep -q 'daily_budget_reached'; then echo "daily neuron budget reached; stopping."; break; fi
+              if echo "$resp" | grep -q 'all_embedded'; then echo "all docs embedded; stopping."; break; fi
+            else
+              echo "$resp" | jq -c '.sources | to_entries[0].value | {src:.source, created, frontier, status, error}' 2>/dev/null \
+                || { echo "non-json or error:"; echo "$resp" | head -c 300; }
+            fi
             sleep "$SLEEP"
           done
