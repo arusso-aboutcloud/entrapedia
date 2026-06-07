@@ -22,9 +22,13 @@ Cron-driven ingestion worker forking the Entra-Tracker pattern: fetch upstream s
 
 Ingestion worker (`workers/ingestion/`) that resolves each Tier-A repo head, walks the tree (descend-on-truncation, resumable frontier in `sync_state`), diffs git blob SHAs against `documents`, and stores changed/new bodies to R2 with `documents` upserts tagged `current`/`legacy`. Per-run file + subrequest caps keep it free-tier-safe and resumable. Daily cron + authenticated manual trigger. Fetch-and-store only — no embedding, no `chunks`, no vectors.
 
-### Chunk 3b — Embedding — next
+### Chunk 3b — Embedding
 
-Embed changed chunks with `@cf/baai/bge-base-en-v1.5` (768-dim), write `chunks` rows, and upsert vectors into the `entrapedia-chunks` Vectorize index with `trust`/`source`/`content_type` metadata. Incremental (changed-only) to stay within the neuron budget.
+Split into two phases so neuron spend is sized and chunk quality approved before anything is spent.
+
+**Phase 1 — dry-run chunking — done.** Heading-aware chunker (`workers/ingestion/chunker.mjs`) run as a dry run over a 410-doc representative sample (zero neurons, no `chunks`/Vectorize writes, no AI). Findings in `docs/dryrun/chunk-dryrun-report.md`: projected ~144,254 chunks full-corpus; token median 363 / mean 441 / p95 690; embedding is a multi-week first pass under the free-tier neuron cap. Open decision flagged: a few un-splittable tables/code blocks exceed bge-base's 512-token limit and would be truncated.
+
+**Phase 2 — embedding — next, gated on review.** Embed changed chunks with `@cf/baai/bge-base-en-v1.5` (768-dim), write `chunks` rows, and upsert vectors into the `entrapedia-chunks` Vectorize index with `trust`/`source`/`content_type` metadata. Incremental (changed-only), throttled under the daily neuron budget. Do not start until the phase-1 dry run is reviewed (chunk quality + the oversized-table handling + the confirmed neuron/chunk cost).
 
 ## Chunk 4 — RAG retrieval + search
 

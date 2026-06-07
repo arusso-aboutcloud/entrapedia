@@ -125,3 +125,35 @@ so the crawl stays self-maintaining against upstream repo reorganisation.
 5. Write each raw body to R2 (`{source}/{path}`) and upsert the `documents` row
    (`doc_id = {source}:{path}`, `content_hash = git blob SHA`).
 6. Persist walk + sync progress to `sync_state`.
+
+## Chunking (chunk 3b, phase 1: dry run)
+
+`workers/ingestion/chunker.mjs` is a pure, dependency-injectable function
+(`chunkDocument(body, meta, opts)`) that turns a stored doc body into chunk
+objects for embedding. It does NOT write to the DB or call AI.
+
+Strategy: strip YAML frontmatter (keep title/description/ms.topic as metadata);
+split markdown on H1-H3 heading boundaries; target ~512 tokens (range ~256-640);
+never split inside a fenced code block or a table; merge a tiny trailing section
+into the previous chunk; keep the heading trail attached to each chunk for
+context; chunk `.yml` content docs by top-level list entry. Token counting is an
+injected function -- the default `estimateTokens()` is a WordPiece approximation
+for bge-base that slightly over-counts (conservative for budgeting).
+
+Phase-1 dry run (`docs/dryrun/chunk-dryrun-report.md`, 410-doc representative
+sample across all four sources + priority/edge-case docs):
+
+- **Projected full corpus: ~144,254 chunks** (graph-docs ~113k, entra-docs ~27k,
+  entra-powershell ~2.3k, azure-docs-aad ~1.5k).
+- Token distribution (estimate): min 49 / median 363 / mean 441 / p95 690 /
+  max 9,980; ~82% of chunks land in the 256-512 band.
+- Embedding cost: at an assumed (UNCONFIRMED) ~9 neurons/chunk for
+  `@cf/baai/bge-base-en-v1.5`, a full first pass is ~1.3M neurons -> a multi-week
+  job under the 10k-neurons/day free-tier cap. Confirms the embed-once /
+  cache-forever / incremental model. (See the report for a 3-20 neuron/chunk
+  sensitivity table.)
+- **Open decision before phase 2:** a few un-splittable property/permission
+  tables and large code blocks exceed bge-base's 512-token input limit (worst:
+  `api-reference/v1.0/resources/user.md` ~9,980 tokens) and would be truncated at
+  embed time. Proposed fix: split oversized tables by row-groups (header repeated
+  on each split) while leaving normal tables intact.
