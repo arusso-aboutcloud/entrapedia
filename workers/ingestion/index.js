@@ -13,13 +13,13 @@
  * rows. The AI and VECTORIZE bindings are intentionally NOT referenced in this
  * file. Embedding is chunk 3b.
  *
- * Tree truncation: the GitHub Git Trees API truncates large recursive trees
- * (~100k entries / 7MB). microsoft-graph-docs-contrib exceeds it. We therefore
- * "descend on truncation": one recursive tree call per directory, and only when
- * a directory comes back `truncated` do we list it non-recursively and enqueue
- * its child directories. The pending-directory frontier is persisted in
- * sync_state.last_etag so a capped run resumes the walk -- no hardcoded content
- * paths, self-maintaining against upstream reorg.
+ * Tree walk: the GitHub Git Trees API truncates large recursive trees, and a
+ * recursive call on a big directory returns multi-MB JSON whose parse alone can
+ * exceed the Workers Free CPU limit (error 1102). So we never fetch recursively:
+ * we list one directory level non-recursively per visit and enqueue child dirs
+ * (skipping includes/images/dot-dirs that never yield content). The pending-
+ * directory frontier is persisted in sync_state.last_etag so a capped run
+ * resumes the walk -- no hardcoded content paths, self-maintaining against reorg.
  *
  * Secrets (NOT committed; set via `wrangler secret put`):
  *   GITHUB_TOKEN   - GitHub token (public-repo read is sufficient). Sent as a
@@ -175,20 +175,18 @@ async function fetchBody(env, source, branch, path, budget) {
 // Known content hashes for the DIRECT files of one directory only (not the whole
 // source) -- keeps the in-memory set and D1 response small so per-run CPU stays
 // under the Workers Free limit even on directories with thousands of files.
-// Escape LIKE wildcards so directory paths containing '_' or '%' are matched
-// literally (and don't trip SQLite's "LIKE pattern too complex" guard).
-function escapeLike(s) {
-  return s.replace(/[\\%_]/g, (c) => '\\' + c);
-}
-
+// Known content hashes for docs under one directory prefix, via a RANGE scan
+// (no LIKE -> no wildcard pitfalls, no "pattern too complex"). Returns the whole
+// subtree under the prefix; only the directory's direct blobs are ever looked
+// up, so extra nested rows are harmless. For the leaf/non-content dirs that
+// dominate the frontier this returns ~0 rows.
 async function loadKnownHashesForDir(env, sourceKey, dirPrefix, budget) {
   budget.sub--;
-  const p = escapeLike(`${sourceKey}:${dirPrefix}`);
-  const like = `${p}%`;
-  const nested = `${p}%/%`;
+  const lo = `${sourceKey}:${dirPrefix}`;
+  const hi = lo + String.fromCharCode(0xffff);
   const { results } = await env.DB.prepare(
-    "SELECT doc_id, content_hash FROM documents WHERE source = ? AND doc_id LIKE ? ESCAPE '\\' AND doc_id NOT LIKE ? ESCAPE '\\'"
-  ).bind(sourceKey, like, nested).all();
+    'SELECT doc_id, content_hash FROM documents WHERE source = ? AND doc_id >= ? AND doc_id < ?'
+  ).bind(sourceKey, lo, hi).all();
   const m = new Map();
   for (const r of results) m.set(r.doc_id, r.content_hash);
   return m;
@@ -255,8 +253,16 @@ async function processSource(env, source, budget) {
     let blobs = [];
     let subdirs = [];
     for (const e of t.tree) {
-      if (e.type === 'blob') blobs.push({ path: dir.prefix + e.path, sha: e.sha });
-      else if (e.type === 'tree') subdirs.push({ sha: e.sha, prefix: dir.prefix + e.path + '/' });
+      if (e.type === 'blob') {
+        blobs.push({ path: dir.prefix + e.path, sha: e.sha });
+      } else if (e.type === 'tree') {
+        // Don't descend into dirs that never yield content: snippet fragments
+        // (`includes`), binary `images`, or dot-dirs. Saves walking thousands of
+        // empty-for-us directories (e.g. Graph's per-topic image folders).
+        const name = e.path.toLowerCase();
+        if (name === 'includes' || name === 'images' || name.startsWith('.')) continue;
+        subdirs.push({ sha: e.sha, prefix: dir.prefix + e.path + '/' });
+      }
     }
     stat.examined += blobs.length;
 
