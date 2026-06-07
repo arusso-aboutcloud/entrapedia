@@ -122,7 +122,7 @@ jobs:
             resp=$(curl -sS --retry 4 --retry-delay 3 --retry-all-errors \
               -H "Authorization: Bearer $TRIGGER_SECRET" "$URL/run?$Q" || true)
             if [ -z "$resp" ]; then echo "iter $i: request failed after retries, continuing"; sleep "$SLEEP"; continue; fi
-            echo "$resp" | jq -c '.sources | to_entries[0].value | {src:.source, created, updated, frontier, status}' 2>/dev/null \
-              || { echo "non-json or error:"; echo "$resp" | head -c 200; }
+            echo "$resp" | jq -c '.sources | to_entries[0].value | {src:.source, created, frontier, status, error}' 2>/dev/null \
+              || { echo "non-json or error:"; echo "$resp" | head -c 300; }
             sleep "$SLEEP"
           done
