@@ -175,12 +175,19 @@ async function fetchBody(env, source, branch, path, budget) {
 // Known content hashes for the DIRECT files of one directory only (not the whole
 // source) -- keeps the in-memory set and D1 response small so per-run CPU stays
 // under the Workers Free limit even on directories with thousands of files.
+// Escape LIKE wildcards so directory paths containing '_' or '%' are matched
+// literally (and don't trip SQLite's "LIKE pattern too complex" guard).
+function escapeLike(s) {
+  return s.replace(/[\\%_]/g, (c) => '\\' + c);
+}
+
 async function loadKnownHashesForDir(env, sourceKey, dirPrefix, budget) {
   budget.sub--;
-  const like = `${sourceKey}:${dirPrefix}%`;
-  const nested = `${sourceKey}:${dirPrefix}%/%`;
+  const p = escapeLike(`${sourceKey}:${dirPrefix}`);
+  const like = `${p}%`;
+  const nested = `${p}%/%`;
   const { results } = await env.DB.prepare(
-    'SELECT doc_id, content_hash FROM documents WHERE source = ? AND doc_id LIKE ? AND doc_id NOT LIKE ?'
+    "SELECT doc_id, content_hash FROM documents WHERE source = ? AND doc_id LIKE ? ESCAPE '\\' AND doc_id NOT LIKE ? ESCAPE '\\'"
   ).bind(sourceKey, like, nested).all();
   const m = new Map();
   for (const r of results) m.set(r.doc_id, r.content_hash);
