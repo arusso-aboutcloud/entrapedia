@@ -47,10 +47,14 @@ const EMBED_MODEL = '@cf/baai/bge-base-en-v1.5'; // 768-dim, max 512 input token
 const EMBED_MAX_TOKENS = 512;                    // model input cap; longer is silently dropped
 const NEURONS_PER_MTOKEN = 6058;                 // @cf/baai/bge-base-en-v1.5 (Cloudflare pricing)
 
-// Per-DAY (UTC) neuron cap. ~1k under the 10k free-tier ceiling for headroom.
-// The hard free-tier reset is 00:00 UTC; we hard-stop the day's embedding here.
-// TUNABLE.
-const EMBED_NEURON_BUDGET = 9000;
+// Per-DAY (UTC) neuron cap for the embedding backfill. The hard free-tier reset
+// is 00:00 UTC; we hard-stop the day's embedding here.
+// CALIBRATION: real Workers AI usage measured ~1.25x this estimated count
+// (per-request overhead beyond the 6058/M-token input rate), so a 9000 budget
+// overshot to the 10k ceiling (error 4006). Set to 6000 (estimated) -> ~7.5k
+// real, reserving ~2.5k/day of real headroom so retrieval `/search` query
+// embeds (~1 neuron each) never starve the backfill or trip 4006. TUNABLE.
+const EMBED_NEURON_BUDGET = 6000;
 
 // Per-INVOCATION subrequest cap (Workers Free allows 50). Embedding batches a
 // whole doc's chunks into one AI call + one Vectorize upsert + one D1 batch, so
