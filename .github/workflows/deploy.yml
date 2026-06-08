@@ -37,13 +37,21 @@ on:
         type: string
         default: '6'
       mode:
-        description: 'Backfill endpoint: run (ingestion) or embed (chunk 3b)'
+        description: 'Endpoint: run (ingestion) | embed (3b) | search (4)'
         type: string
         default: 'run'
       docs:
         description: 'Docs per /embed call (embed mode)'
         type: string
         default: '20'
+      query:
+        description: 'Search query (search mode)'
+        type: string
+        default: ''
+      scope:
+        description: 'Search trust scope: official | community | both'
+        type: string
+        default: 'both'
   push:
     branches: [main]
     paths:
@@ -114,6 +122,9 @@ jobs:
           MODE="${{ inputs.mode }}"
           if [ "$MODE" = "embed" ]; then
             ENDPOINT="/embed?docs=${{ inputs.docs }}"
+          elif [ "$MODE" = "search" ]; then
+            ENDPOINT="/search"
+            BODY=$(jq -nc --arg q "${{ inputs.query }}" --arg s "${{ inputs.scope }}" '{query:$q, trust_scope:$s, top_k:5}')
           else
             Q="max=${{ inputs.max }}"
             SRC="${{ inputs.source }}"
@@ -133,10 +144,20 @@ jobs:
                 echo "[rate] low ($rem); backing off ${wait}s until reset"; sleep "$wait"
               fi
             fi
-            resp=$(curl -sS --retry 4 --retry-delay 3 --retry-all-errors \
-              -H "Authorization: Bearer $TRIGGER_SECRET" "$URL$ENDPOINT" || true)
+            if [ "$MODE" = "search" ]; then
+              resp=$(curl -sS --retry 4 --retry-delay 3 --retry-all-errors -X POST \
+                -H "Authorization: Bearer $TRIGGER_SECRET" -H 'Content-Type: application/json' \
+                -d "$BODY" "$URL$ENDPOINT" || true)
+            else
+              resp=$(curl -sS --retry 4 --retry-delay 3 --retry-all-errors \
+                -H "Authorization: Bearer $TRIGGER_SECRET" "$URL$ENDPOINT" || true)
+            fi
             if [ -z "$resp" ]; then echo "iter $i: request failed after retries, continuing"; sleep "$SLEEP"; continue; fi
-            if [ "$MODE" = "embed" ]; then
+            if [ "$MODE" = "search" ]; then
+              echo "=== iter $i ==="
+              echo "$resp" | jq '{cache_hit, neurons, count, results: [.results[] | {score, reranked_score, trust, layer, doc_title, heading, source_url: .citation.source_url, license: .citation.license, attribution: .citation.attribution, snippet: (.snippet[0:240])}]}' 2>/dev/null \
+                || { echo "non-json or error:"; echo "$resp" | head -c 400; }
+            elif [ "$MODE" = "embed" ]; then
               echo "$resp" | jq -c '{tier, docs, chunks, neurons, today:.neurons_today_after, cap:.daily_cap, status, errors, last_error}' 2>/dev/null \
                 || { echo "non-json or error:"; echo "$resp" | head -c 300; }
               # stop early once the daily neuron budget is reached

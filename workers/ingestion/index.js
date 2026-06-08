@@ -28,7 +28,7 @@
  *   TRIGGER_SECRET - shared secret guarding the manual POST/GET /run trigger.
  */
 
-import { chunkDocument } from './chunker.mjs';
+import { chunkDocument, estimateTokens } from './chunker.mjs';
 
 // ---- tunable run budgets -------------------------------------------------
 
@@ -58,6 +58,23 @@ const EMBED_NEURON_BUDGET = 9000;
 // TUNABLE.
 const EMBED_SUBREQUEST_BUDGET = 45;
 const EMBED_DOCS_PER_RUN = 40; // safety cap on docs selected per invocation
+
+// ---- retrieval / search (chunk 4) ----------------------------------------
+
+// bge-base s2p convention: prefix the QUERY (not the passages) with this
+// instruction for short-query -> long-passage retrieval.
+const BGE_QUERY_INSTRUCTION = 'Represent this sentence for searching relevant passages: ';
+// Trust re-rank: additive bonus to the cosine score for official over community,
+// so official outranks community at similar relevance. TUNABLE (raise when
+// community/Tier-D content lands and needs a stronger demotion).
+const TRUST_BONUS = 0.05;
+const SEARCH_TOPK_DEFAULT = 8;
+const SEARCH_TOPK_MAX = 25;
+// Query-result cache staleness bound. While the embedding backfill is still
+// filling the index, a short TTL keeps repeats cheap without serving a stale
+// partial result set indefinitely; raise it once the corpus is fully embedded.
+// TUNABLE.
+const SEARCH_CACHE_TTL_SECONDS = 3600;
 
 const GH_API = 'https://api.github.com';
 const GH_RAW = 'https://raw.githubusercontent.com';
@@ -499,6 +516,121 @@ async function runEmbedding(env, opts = {}) {
   return stat;
 }
 
+// ---- retrieval / search (chunk 4) ----------------------------------------
+
+// Normalize a query for the cache key: lowercase, trim, collapse whitespace.
+function normalizeQuery(q) { return String(q || '').toLowerCase().trim().replace(/\s+/g, ' '); }
+
+async function sha256hex(s) {
+  const h = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
+  return [...new Uint8Array(h)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Retrieval-only search: embed the query (cache-miss only), Vectorize search with
+ * trust/source/content_type filters, trust re-rank (official > community), layer
+ * post-filter, hydrate chunk text from R2 (re-chunked deterministically) + doc
+ * citations from D1, and cache the ranked result list. NO LLM generation.
+ */
+async function runSearch(env, opts) {
+  const query = String(opts.query || '').trim();
+  if (!query) return { error: 'empty query', results: [] };
+  const norm = normalizeQuery(query);
+  const scope = ['official', 'community', 'both'].includes(opts.trust_scope) ? opts.trust_scope : 'both';
+  let topK = parseInt(opts.top_k, 10);
+  if (!Number.isFinite(topK) || topK < 1) topK = SEARCH_TOPK_DEFAULT;
+  topK = Math.min(topK, SEARCH_TOPK_MAX);
+  const f = { source: opts.source || '', content_type: opts.content_type || '', layer: opts.layer || '' };
+  const now = Math.floor(Date.now() / 1000);
+
+  const cacheKey = await sha256hex(`${norm}|${scope}|${f.source}|${f.content_type}|${f.layer}|${topK}`);
+
+  // --- cache lookup (zero neurons on a fresh hit) ---
+  const cached = await env.DB.prepare('SELECT answer, created_at FROM answer_cache WHERE question_hash = ?').bind(cacheKey).first();
+  if (cached && (now - cached.created_at) <= SEARCH_CACHE_TTL_SECONDS) {
+    await env.DB.prepare('UPDATE answer_cache SET hit_count = hit_count + 1 WHERE question_hash = ?').bind(cacheKey).run();
+    try { return { ...JSON.parse(cached.answer), cache_hit: true, neurons: 0 }; } catch (_) { /* fall through to recompute */ }
+  }
+
+  // --- embed the query (~1 neuron) ---
+  const emb = await env.AI.run(EMBED_MODEL, { text: [BGE_QUERY_INSTRUCTION + query] });
+  const qvec = emb.data[0];
+  const neurons = chunkNeurons(estimateTokens(query) + 10);
+
+  // --- Vectorize search (indexed filters: trust, source, content_type) ---
+  const vfilter = {};
+  if (scope === 'official') vfilter.trust = { $eq: 'official' };
+  else if (scope === 'community') vfilter.trust = { $eq: 'community' };
+  if (f.source) vfilter.source = { $eq: f.source };
+  if (f.content_type) vfilter.content_type = { $eq: f.content_type };
+  const overFetch = Math.min(50, topK * (f.layer ? 4 : 2)); // overfetch for layer post-filter + re-rank
+  const vres = await env.VECTORIZE.query(qvec, {
+    topK: overFetch,
+    returnMetadata: 'all',
+    ...(Object.keys(vfilter).length ? { filter: vfilter } : {}),
+  });
+  let matches = vres.matches || [];
+  if (f.layer) matches = matches.filter((m) => (m.metadata && m.metadata.layer) === f.layer);
+
+  // --- trust re-rank: official outranks community at similar relevance ---
+  for (const m of matches) m._eff = m.score + ((m.metadata && m.metadata.trust) === 'official' ? TRUST_BONUS : 0);
+  matches.sort((a, b) => b._eff - a._eff);
+  matches = matches.slice(0, topK);
+
+  // --- hydrate (dedupe by doc): citations from D1 + chunk text from R2 ---
+  const docIds = [...new Set(matches.map((m) => m.metadata.doc_id).filter(Boolean))];
+  const docRows = {};
+  if (docIds.length) {
+    const ph = docIds.map(() => '?').join(',');
+    const dr = await env.DB.prepare(`SELECT doc_id, source_url, license, attribution, trust, source, content_type, layer FROM documents WHERE doc_id IN (${ph})`).bind(...docIds).all();
+    for (const r of dr.results) docRows[r.doc_id] = r;
+  }
+  const docChunks = {};
+  for (const did of docIds) {
+    const m = matches.find((x) => x.metadata.doc_id === did);
+    const r2Key = m.metadata.r2_key;
+    const obj = await env.CORPUS.get(r2Key);
+    if (!obj) continue;
+    const body = await obj.text();
+    const dr = docRows[did] || {};
+    docChunks[did] = chunkDocument(body, { doc_id: did, source: dr.source, trust: dr.trust, content_type: dr.content_type, layer: dr.layer, r2_key: r2Key });
+  }
+
+  const results = matches.map((m) => {
+    const did = m.metadata.doc_id;
+    const idx = m.metadata.chunk_index;
+    const chunks = docChunks[did];
+    const c = chunks && chunks[idx] ? chunks[idx] : null;
+    const dr = docRows[did] || {};
+    return {
+      score: Math.round(m.score * 10000) / 10000,
+      reranked_score: Math.round(m._eff * 10000) / 10000,
+      trust: m.metadata.trust,
+      layer: m.metadata.layer,
+      source: m.metadata.source,
+      content_type: m.metadata.content_type,
+      doc_id: did,
+      chunk_index: idx,
+      doc_title: (c && c.frontmatter && c.frontmatter.title) || (c && c.headingTrail && c.headingTrail[0]) || did,
+      heading: (c && c.heading) || '',
+      snippet: c ? c.text.slice(0, 1200) : null,
+      ...(m.metadata.oversized_code ? { oversized_code: true } : {}),
+      citation: { source_url: dr.source_url || null, license: dr.license || null, attribution: dr.attribution || null },
+    };
+  });
+
+  const payload = { query, normalized: norm, scope, top_k: topK, filters: f, count: results.length, results };
+
+  // --- cache the ranked result list (NOT a generated answer) ---
+  await env.DB.prepare(
+    `INSERT INTO answer_cache (question_hash, answer, citations, created_at, hit_count)
+     VALUES (?1, ?2, ?3, ?4, 0)
+     ON CONFLICT(question_hash) DO UPDATE SET answer = ?2, citations = ?3, created_at = ?4, hit_count = 0`
+  ).bind(cacheKey, JSON.stringify(payload), JSON.stringify(results.map((r) => r.citation)), now).run();
+
+  return { ...payload, cache_hit: false, neurons };
+}
+
 export default {
   // Cron handler. The daily 06:00 UTC trigger runs the Tier-A ingestion reconcile
   // (lead source rotates by day-of-year). Any other (more frequent) cron runs the
@@ -516,9 +648,13 @@ export default {
   // Authenticated manual triggers (Bearer TRIGGER_SECRET):
   //   /run    -> ingestion (?source=&max=&sub=)
   //   /embed  -> embedding pass (?docs=&sub=&neurons= per-call daily-cap override)
+  //   /search -> retrieval (GET ?q=&scope=&source=&content_type=&layer=&top_k=
+  //              or POST JSON {query, trust_scope, source, content_type, layer, top_k})
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (url.pathname !== '/run' && url.pathname !== '/embed') return new Response('Not found', { status: 404 });
+    if (url.pathname !== '/run' && url.pathname !== '/embed' && url.pathname !== '/search') {
+      return new Response('Not found', { status: 404 });
+    }
 
     const auth = request.headers.get('Authorization') || '';
     const provided = auth.startsWith('Bearer ') ? auth.slice(7).trim() : (url.searchParams.get('key') || '');
@@ -527,7 +663,20 @@ export default {
     }
 
     let summary;
-    if (url.pathname === '/embed') {
+    if (url.pathname === '/search') {
+      let body = {};
+      if (request.method === 'POST') { try { body = await request.json(); } catch (_) { body = {}; } }
+      const q = url.searchParams;
+      const opts = {
+        query: body.query || q.get('q') || q.get('query') || '',
+        trust_scope: body.trust_scope || q.get('scope') || q.get('trust_scope') || 'both',
+        source: body.source || q.get('source') || '',
+        content_type: body.content_type || q.get('content_type') || '',
+        layer: body.layer || q.get('layer') || '',
+        top_k: body.top_k || q.get('top_k') || '',
+      };
+      summary = await runSearch(env, opts);
+    } else if (url.pathname === '/embed') {
       const opts = {};
       const docs = parseInt(url.searchParams.get('docs') || '', 10);
       if (Number.isFinite(docs) && docs > 0) opts.docs = docs;
