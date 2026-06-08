@@ -132,6 +132,23 @@ function splitTable(tableText, count, limit) {
   return pieces.length ? pieces : [tableText];
 }
 
+// Split an oversized non-code text block (e.g. a docfx blockquote that wraps code
+// fences we can't treat atomically) by line-groups into pieces under `limit`.
+function splitText(text, count, limit) {
+  const lines = text.split('\n');
+  const pieces = [];
+  let group = [];
+  let tok = 0;
+  const flush = () => { if (group.length) { pieces.push(group.join('\n')); group = []; tok = 0; } };
+  for (const ln of lines) {
+    const lt = count(ln) || 1;
+    if (group.length && tok + lt > limit) flush();
+    group.push(ln); tok += lt;
+  }
+  flush();
+  return pieces.length ? pieces : [text];
+}
+
 // ---- markdown chunking ---------------------------------------------------
 
 // Tokens reserved for the heading trail prepended to each chunk's text, so the
@@ -148,12 +165,15 @@ function chunkMarkdown(body, meta, opts) {
   const raw = parseBlocks(body);
   const blocks = [];
   for (const b of raw) {
-    if (b.type === 'table') {
-      const tok = count(b.text);
-      if (tok > contentCap) {
-        for (const piece of splitTable(b.text, count, contentCap - 8)) blocks.push({ type: 'tablepiece', text: piece, isolate: true });
-        continue;
-      }
+    if (b.type === 'table' && count(b.text) > contentCap) {
+      for (const piece of splitTable(b.text, count, contentCap - 8)) blocks.push({ type: 'tablepiece', text: piece, isolate: true });
+      continue;
+    }
+    // Oversized non-code text (e.g. a blockquote-wrapped quickstart): split by
+    // line-groups so no single unsplittable text block blows the 512 cap.
+    if (b.type === 'text' && count(b.text) > contentCap) {
+      for (const piece of splitText(b.text, count, contentCap)) blocks.push({ type: 'text', text: piece });
+      continue;
     }
     blocks.push(b);
   }
@@ -223,7 +243,13 @@ function chunkYml(body, meta, opts) {
   for (const line of lines) { if (/^- /.test(line) && buf.length) { units.push(buf.join('\n')); buf = [line]; } else buf.push(line); }
   if (buf.length) units.push(buf.join('\n'));
   const cleaned = units.map((u) => u.trim()).filter(Boolean);
-  const src = cleaned.length ? cleaned : [body.trim()];
+  const base = cleaned.length ? cleaned : [body.trim()];
+  // Split any unit that exceeds the cap (e.g. a big landing-page yml section).
+  const src = [];
+  for (const u of base) {
+    if (count(u) > opts.maxTokens) for (const piece of splitText(u, count, opts.maxTokens - 16)) src.push(piece);
+    else src.push(u);
+  }
   return src.map((text) => ({ heading: '', headingTrail: [], text, token_count: count(text), oversized_code: false, flags: ['yml_unit'] }));
 }
 
