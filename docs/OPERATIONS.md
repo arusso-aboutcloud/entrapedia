@@ -157,3 +157,58 @@ sample across all four sources + priority/edge-case docs):
   `api-reference/v1.0/resources/user.md` ~9,980 tokens) and would be truncated at
   embed time. Proposed fix: split oversized tables by row-groups (header repeated
   on each split) while leaving normal tables intact.
+
+## Embedding pass (chunk 3b, phase 2: NEURON-SPENDING)
+
+The worker embeds chunked docs into Vectorize with `@cf/baai/bge-base-en-v1.5`
+(768-dim), throttled under the free-tier daily neuron ceiling, resumable.
+
+### Cost + throttle
+
+- Cost: **6,058 neurons / 1M input tokens** (Cloudflare pricing for bge-base);
+  ~3 neurons per ~441-token chunk. Per-chunk neurons are tracked as
+  `ceil(min(token_count, 512) / 1e6 * 6058)`.
+- `EMBED_NEURON_BUDGET = 9000` neurons/day (UTC) — a named, tunable constant ~1k
+  under the 10,000/day free-tier hard stop (error 4006). Today's spend is tracked
+  in `sync_state` row `@embed` (`{date, neurons}`, reset at 00:00 UTC); once the
+  cap is hit, every run no-ops until the next UTC day.
+- `EMBED_SUBREQUEST_BUDGET = 45` per invocation bounds docs/call (a whole doc's
+  chunks go in ONE AI call + ONE Vectorize upsert + ONE D1 batch). Full corpus
+  (~144k chunks) is ~43 days of daily-budgeted runs by design.
+
+### Drive + schedule
+
+- Cron `7,27,47 * * * *` runs the embedding pass 3x/hour; it self-throttles
+  against the daily budget, so the corpus embeds incrementally on its own.
+- Manual accel: `gh workflow run deploy.yml -f run_backfill=true -f mode=embed -f docs=20 -f iterations=30`
+  (drives `/embed`; stops automatically at `daily_budget_reached`).
+- `/embed` (Bearer `TRIGGER_SECRET`) params: `docs=<n>` (docs/call), `sub=<n>`,
+  `neurons=<n>` (per-call daily-cap override).
+
+### Priority + resumption
+
+- Tiers (complete one before the next): **P1** permissions-reference + all
+  graph `api-reference/**` + entra-docs identity-core (sign-in / conditional
+  access / app+enterprise-app registration / authentication / identity-protection
+  / identity-platform); **P2** rest of graph concepts + rest of entra-docs;
+  **P3** entra-powershell-docs then azure-docs-aad (legacy).
+- Resumable via `documents.embedded_at` (NULL until all of a doc's chunks are
+  embedded) + chunk-level presence in `chunks`.
+
+### Oversized blocks (vs the 512-token model limit)
+
+- Tables over the limit are split by row-groups with the header repeated (no row
+  loses its columns). Validated on `user.md`: 100% of property rows covered, no
+  table chunk over 512.
+- Oversized fenced code blocks are kept intact (flagged `oversized_code` in the
+  vector metadata) and truncated to <=512 tokens for the VECTOR only; the full
+  code stays in the R2 body. Oversized non-code text (e.g. docfx blockquotes
+  wrapping code) and oversized yml units are split by line-groups.
+
+### What gets written per chunk
+
+- `chunks` row: `chunk_id` (`{doc_id}#{idx}`), `doc_id`, `chunk_index`, `r2_key`,
+  `vector_id` (48-hex SHA-256 of chunk_id), `token_count`.
+- Vectorize: 768-dim vector keyed by `vector_id`, with filter metadata
+  `trust`/`source`/`content_type` (+ `doc_id`/`chunk_index`/`r2_key` pointers and
+  `oversized_code` where set).
