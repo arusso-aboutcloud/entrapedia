@@ -663,6 +663,7 @@ export default {
     }
 
     let summary;
+    try {
     if (url.pathname === '/search') {
       let body = {};
       if (request.method === 'POST') { try { body = await request.json(); } catch (_) { body = {}; } }
@@ -694,6 +695,9 @@ export default {
       const src = url.searchParams.get('source');
       if (src) opts.source = src;
       summary = await runIngestion(env, opts);
+    }
+    } catch (e) {
+      return new Response(JSON.stringify({ error: String(e), stack: (e && e.stack) ? String(e.stack).slice(0, 600) : null }, null, 2), { status: 500, headers: { 'Content-Type': 'application/json' } });
     }
 
     return new Response(JSON.stringify(summary, null, 2), { headers: { 'Content-Type': 'application/json' } });
