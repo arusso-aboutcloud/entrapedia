@@ -212,3 +212,47 @@ The worker embeds chunked docs into Vectorize with `@cf/baai/bge-base-en-v1.5`
 - Vectorize: 768-dim vector keyed by `vector_id`, with filter metadata
   `trust`/`source`/`content_type` (+ `doc_id`/`chunk_index`/`r2_key` pointers and
   `oversized_code` where set).
+
+## Retrieval / search (chunk 4)
+
+`/search` (Bearer `TRIGGER_SECRET`) returns ranked, cited chunks — **no LLM
+generation**. GET `?q=...&scope=...&source=...&content_type=...&layer=...&top_k=...`
+or POST JSON `{query, trust_scope, source, content_type, layer, top_k}`.
+
+```sh
+gh workflow run deploy.yml -f run_backfill=true -f mode=search \
+  -f query="what permission do I need to read all users" -f scope=both
+```
+
+Each result carries: `score` + `reranked_score`, `trust`, `layer`, `source`,
+`doc_id`/`chunk_index`, `doc_title`, `heading`, `snippet`, and a `citation`
+(`source_url` / `license` / `attribution`, per DESIGN.md §4).
+
+- **Ranking:** cosine from Vectorize, then a **trust re-rank** — `TRUST_BONUS`
+  (default 0.05, tunable) added to the score for `official`, so official outranks
+  community at similar relevance. `trust_scope` = `official` | `community` |
+  `both` (default) selects the pool (Vectorize `trust` filter / `both` = no filter).
+- **Filters:** `trust`/`source`/`content_type` are Vectorize metadata-index
+  filters; `layer` is post-filtered (it is not an index — over-fetch covers it).
+- **Hydration:** the snippet is re-derived from the R2 body with the same pure
+  chunker (deduped by doc) because 3b stores no chunk text; deterministic, so
+  `chunk_index` maps back exactly.
+- **Cache (`answer_cache`):** key = SHA-256 of the normalized query (lowercase,
+  trim, collapse whitespace) + scope + filters + top_k. Value = the ranked result
+  list JSON. **Cache hit → `hit_count++`, ZERO neurons.** Miss → embed + search +
+  cache. **Staleness:** `SEARCH_CACHE_TTL_SECONDS` (default 3600) bounds how long
+  a result set survives while the index is still filling; entries older than the
+  TTL are treated as a miss and recomputed. Raise the TTL once the corpus is
+  fully embedded.
+- **Neuron cost:** cached query = **0 neurons**; uncached = **~1 neuron** (one
+  query embed). Retrieval embeds share the 10k/day free-tier ceiling with the
+  embedding backfill.
+
+### Neuron budget calibration (important)
+
+Real Workers AI usage was measured at **~1.25x** the token-cost estimate
+(per-request overhead beyond the 6058/M-token input rate): a 9000 estimated/day
+embed budget overshot to the 10,000 real ceiling (`error 4006`), which also
+broke retrieval. `EMBED_NEURON_BUDGET` is therefore **6000** (estimated; ~7.5k
+real), reserving ~2.5k real/day so `/search` query embeds never trip 4006. If
+4006 still appears, lower it further.

@@ -30,9 +30,9 @@ Split into two phases so neuron spend is sized and chunk quality approved before
 
 **Phase 2 — embedding — in progress.** The chunker is wired into the worker and embeds the corpus with `@cf/baai/bge-base-en-v1.5` (768-dim) into the `entrapedia-chunks` Vectorize index with `trust`/`source`/`content_type` metadata, writing `chunks` rows in lockstep. Oversized tables are split by row-groups (header repeated; validated on `user.md` — 100% of property rows covered, no table chunk over 512); oversized code is flagged + truncated-for-vector only. Priority tiers P1 (permissions-reference + all graph `api-reference` + entra-docs identity-core) → P2 → P3 (powershell, then azure legacy). Throttled to `EMBED_NEURON_BUDGET = 9000` neurons/day (UTC; ~1k under the 10k free-tier ceiling), resumable via `documents.embedded_at`. A 3x/hour cron self-drives it; the full ~144k-chunk first pass is ~43 days of daily-budgeted runs by design (then incremental). The P1 high-value set is the milestone to report for chunk 4 testing.
 
-## Chunk 4 — RAG retrieval + search
+## Chunk 4 — RAG retrieval + search — in progress
 
-Query worker serving search and retrieval with citations and trust-aware conflict resolution (official outranks community). Answer caching keyed by normalized question. No model generation yet — retrieval quality is proven first. The site is useful at this point on retrieval and caching alone.
+Authenticated `/search` endpoint: query embed (cache-miss only) → Vectorize search with `trust`/`source`/`content_type` filters → trust re-rank (official outranks community, tunable bonus; official/community/both scope) → R2/D1 hydration with citations (source URL + license + attribution) → `answer_cache` query-result cache (zero neurons on hit, short TTL while the index fills). No model generation; retrieval quality is proven first, and the site is useful on retrieval + caching alone. Built and tested against the partial-but-growing vector set; retrieval plumbing validated (Vectorize filter + metadata + snippet hydration with intact GUIDs + citations). Live natural-language test queries pending the daily neuron reset (the embed budget was recalibrated to 6000 after real usage was found to run ~1.25x the token estimate, hitting the 10k ceiling). Generation is the next chunk, gated on retrieval quality.
 
 ## Chunk 5 — Frontend foundation
 
