@@ -44,6 +44,10 @@ on:
         description: 'Docs per /embed call (embed mode)'
         type: string
         default: '20'
+      rechunk:
+        description: 'embed mode: one-permission-per-chunk re-embed of permissions-reference (mode=rechunk)'
+        type: string
+        default: ''
       query:
         description: 'Search query (search mode)'
         type: string
@@ -121,7 +125,11 @@ jobs:
           SLEEP="${{ inputs.sleep_s }}"
           MODE="${{ inputs.mode }}"
           if [ "$MODE" = "embed" ]; then
-            ENDPOINT="/embed?docs=${{ inputs.docs }}"
+            if [ "${{ inputs.rechunk }}" = "true" ]; then
+              ENDPOINT="/embed?mode=rechunk&doc=permissions-reference"
+            else
+              ENDPOINT="/embed?docs=${{ inputs.docs }}"
+            fi
           elif [ "$MODE" = "search" ]; then
             ENDPOINT="/search"
             BODY=$(jq -nc --arg q "${{ inputs.query }}" --arg s "${{ inputs.scope }}" '{query:$q, trust_scope:$s, top_k:5}')
@@ -158,8 +166,14 @@ jobs:
               echo "$resp" | jq '{cache_hit, neurons, count, results: [.results[] | {score, reranked_score, trust, layer, doc_title, heading, source_url: .citation.source_url, license: .citation.license, attribution: .citation.attribution, snippet: (.snippet[0:240])}]}' 2>/dev/null \
                 || { echo "non-json or error:"; echo "$resp" | head -c 400; }
             elif [ "$MODE" = "embed" ]; then
-              echo "$resp" | jq -c '{tier, docs, chunks, neurons, today:.neurons_today_after, cap:.daily_cap, status, errors, last_error}' 2>/dev/null \
-                || { echo "non-json or error:"; echo "$resp" | head -c 300; }
+              if [ "${{ inputs.rechunk }}" = "true" ]; then
+                echo "$resp" | jq -c '{mode, doc_id, parsed, perm, prose, embedded, neurons, deleted_old, today:.neurons_today_after, cap:.daily_cap, status, error}' 2>/dev/null \
+                  || { echo "non-json or error:"; echo "$resp" | head -c 400; }
+                if echo "$resp" | grep -q '"status": *"complete"'; then echo "rechunk complete; stopping."; break; fi
+              else
+                echo "$resp" | jq -c '{tier, docs, chunks, neurons, today:.neurons_today_after, cap:.daily_cap, status, errors, last_error}' 2>/dev/null \
+                  || { echo "non-json or error:"; echo "$resp" | head -c 300; }
+              fi
               # stop early once the daily neuron budget is reached
               if echo "$resp" | grep -q 'daily_budget_reached'; then echo "daily neuron budget reached; stopping."; break; fi
               if echo "$resp" | grep -q 'all_embedded'; then echo "all docs embedded; stopping."; break; fi
