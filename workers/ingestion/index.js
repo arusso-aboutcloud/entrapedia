@@ -832,6 +832,7 @@ async function runSearch(env, opts) {
       content_type: it.content_type || dr.content_type || (c && c.content_type),
       doc_id: it.doc_id,
       chunk_index: it.chunk_index,
+      result_kind: permName ? 'permission' : 'doc',
       permission: permName,
       privilege: (it.priv_rank != null ? it.priv_rank : (c && c.priv_rank != null ? c.priv_rank : null)),
       principal: it.principal || (c && c.principal) || null,
@@ -844,7 +845,21 @@ async function runSearch(env, opts) {
     };
   });
 
-  const payload = { query, normalized: norm, scope, top_k: topK, filters: f, identifier_match: ex.rows.length > 0, least_privilege: lpCue, short_circuit: identifierOnly, count: results.length, results };
+  // Honest least-privilege posture: a least-privilege *intent* with no grounded
+  // permission (no exact name/GUID match) cannot be answered authoritatively from
+  // the permissions-reference list -- the minimal permission for a given operation
+  // is published per-operation on the Graph api-reference method pages. Rather than
+  // rank a similarity-matched permission as if it were the answer, attach an
+  // explicit advisory and flag the results as conceptual guidance. NO heuristic
+  // name->permission mapping. (See ARCHITECTURE.md: known LP-verb-resource limit.)
+  const lpGrounded = ex.rows.length > 0;
+  const advisory = (lpCue && !lpGrounded) ? {
+    kind: 'least_privilege',
+    grounded: false,
+    note: 'Least-privilege intent detected but not grounded to a specific permission. Results below are conceptual guidance and similarity matches, NOT an authoritative minimal-permission answer. The least-privileged permission for a specific Microsoft Graph operation is published on that operation\'s api-reference method page (its "Least privileged permissions" entry); it is not derivable from the permissions-reference list alone. To retrieve a specific permission directly, query its exact name (e.g. User.Read.All) or its GUID.',
+  } : null;
+
+  const payload = { query, normalized: norm, scope, top_k: topK, filters: f, identifier_match: ex.rows.length > 0, least_privilege: lpCue, ...(lpCue ? { least_privilege_grounded: lpGrounded } : {}), short_circuit: identifierOnly, ...(advisory ? { advisory } : {}), count: results.length, results };
 
   // --- cache the ranked result list (NOT a generated answer) ---
   await env.DB.prepare(
