@@ -253,6 +253,152 @@ function chunkYml(body, meta, opts) {
   return src.map((text) => ({ heading: '', headingTrail: [], text, token_count: count(text), oversized_code: false, flags: ['yml_unit'] }));
 }
 
+// ---- structured-reference chunking: permissions-reference (chunk 4) -------
+//
+// One-permission-per-chunk parser for the Microsoft Graph permissions-reference
+// page. Each `### <PermissionName>` section (its own attribute table) becomes
+// exactly ONE chunk carrying its own heading -- never a sibling's. This fixes the
+// merge-multiple-permissions-per-chunk defect that (a) flattened structurally
+// identical permission rows and (b) presented a least-privilege permission under
+// its over-privileged sibling's heading. Permission-name + GUIDs + a privilege
+// ordinal are extracted as per-chunk metadata for identifier-aware matching and a
+// least-privilege re-rank. SCOPED to permissions-reference only (see
+// STRUCTURED_TABLE_DOCS in the worker); prose docs keep the generic chunker.
+
+// Privilege ordinal from the action segment of a permission name
+// (Resource.Action[.Constraint]). Heuristic, within-family ordering only: it lets
+// a least-privilege query prefer the narrower permission. True per-operation least
+// privilege lives in the api-reference method pages (a later RAG pass), NOT here.
+export function privRank(action) {
+  const a = String(action || '').toLowerCase();
+  if (a.includes('readbasic')) return 0;
+  if (a === 'read') return 1;
+  if (a === 'send' || a === 'create' || a === 'add') return 2;
+  if (a === 'readwrite') return 3;
+  if (a === 'manage' || a === 'fullcontrol') return 4;
+  return 2; // unknown action -> mid (flagged priv_unknown on the chunk)
+}
+
+// Parse one permission section's attribute table. Returns the permission metadata
+// or null if the block has no Identifier row (not a permission).
+function parsePermissionBlock(name, blockLines) {
+  const idRows = blockLines.filter((l) => /^\s*\|\s*Identifier\s*\|/i.test(l));
+  if (idRows.length === 0) return null;                 // not a permission
+  if (idRows.length > 1) {                              // the old merge bug -- fail loud
+    throw new Error(`permissions-reference: section "${name}" has ${idRows.length} Identifier rows (merged permissions); aborting`);
+  }
+  const GUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+  const cellsOf = (line) => line.split('|').map((c) => c.trim());
+  const idc = cellsOf(idRows[0]); // ['', 'Identifier', <app>, <delegated>, '']
+  const appG = (idc[2] && GUID.test(idc[2])) ? idc[2].match(GUID)[0].toLowerCase() : null;
+  const delG = (idc[3] && GUID.test(idc[3])) ? idc[3].match(GUID)[0].toLowerCase() : null;
+  const principal = (appG && delG) ? 'both' : (appG ? 'application' : (delG ? 'delegated' : 'unknown'));
+  const dispRow = blockLines.find((l) => /^\s*\|\s*DisplayText\s*\|/i.test(l));
+  let display_text = '';
+  if (dispRow) { const dc = cellsOf(dispRow); display_text = (dc[2] && dc[2] !== '-') ? dc[2] : (dc[3] || ''); }
+  const segs = name.split('.');
+  const family = segs[0] || '';
+  const action = segs[1] || '';
+  const pr = privRank(action);
+  const known = ['readbasic', 'read', 'send', 'create', 'add', 'readwrite', 'manage', 'fullcontrol'];
+  const flags = [];
+  if (!known.includes(String(action).toLowerCase())) flags.push('priv_unknown');
+  return {
+    app_guid: appG, delegated_guid: delG, principal,
+    family, action, priv_rank: pr, scope_all: name.endsWith('.All') ? 1 : 0,
+    display_text, flags,
+  };
+}
+
+// Parse the permissions-reference body into ordered chunks: one per permission
+// (kind 'perm', name-keyed) plus prose gaps (kind 'prose', positional). chunk_index
+// is the document-order position; `suffix` builds the chunk_id namespace in the
+// worker (perm=<Name> / sec=<index>) so name-keyed ids never collide with the old
+// positional ids during the swap.
+export function chunkPermissionsReference(rawBody, meta, opts = {}) {
+  const o = { ...DEFAULTS, ...opts, countTokens: opts.countTokens || estimateTokens };
+  const count = o.countTokens;
+  let { body, frontmatter } = stripFrontmatter(rawBody || '');
+  body = body.replace(/<!--[\s\S]*?-->/g, '');
+  const fm = pickFrontmatter(frontmatter);
+  const lines = body.split(/\r?\n/);
+
+  const out = [];
+  let h1 = '', h2 = '';
+  let prose = [];
+  const trail = () => [h1 && `# ${h1}`, h2 && `## ${h2}`].filter(Boolean);
+  const flushProse = () => {
+    const text = prose.join('\n').trim();
+    prose = [];
+    if (!text) return;
+    const heading = trail().join('\n');
+    out.push({ kind: 'prose', name: null, heading, headingTrail: trail().map((t) => t.replace(/^#+ /, '')), text: heading ? `${heading}\n\n${text}` : text });
+  };
+
+  let i = 0;
+  while (i < lines.length) {
+    const m = lines[i].match(/^(#{1,6})\s+(.+?)\s*#*\s*$/);
+    if (m) {
+      const level = m[1].length;
+      const title = m[2].trim();
+      if (level === 1) { flushProse(); h1 = title; i++; continue; }
+      if (level === 2) { flushProse(); h2 = title; i++; continue; }
+      if (level === 3) {
+        flushProse();
+        const name = title;
+        const blockLines = [];
+        i++;
+        while (i < lines.length && !/^#{1,3}\s/.test(lines[i])) { blockLines.push(lines[i]); i++; }
+        const perm = parsePermissionBlock(name, blockLines);
+        const headingTrail = [...trail(), `### ${name}`];
+        const heading = headingTrail.join('\n');
+        const bodyText = blockLines.join('\n').trim();
+        const text = `${heading}\n\n${bodyText}`.trim();
+        if (!perm) { // defensive: treat a non-permission ### as prose, flagged
+          out.push({ kind: 'prose', name: null, heading, headingTrail: headingTrail.map((t) => t.replace(/^#+ /, '')), text, flags: ['not_a_permission'] });
+          continue;
+        }
+        out.push({ kind: 'perm', name, heading, headingTrail: headingTrail.map((t) => t.replace(/^#+ /, '')), text, ...perm });
+        continue;
+      }
+      // level > 3: fold into prose
+      prose.push(lines[i]); i++; continue;
+    }
+    prose.push(lines[i]); i++;
+  }
+  flushProse();
+
+  return out.map((c, idx) => ({
+    doc_id: meta.doc_id,
+    chunk_index: idx,
+    suffix: c.kind === 'perm' ? `perm=${c.name}` : `sec=${idx}`,
+    kind: c.kind,
+    source: meta.source,
+    trust: meta.trust,
+    content_type: meta.content_type,
+    layer: meta.layer,
+    r2_key: meta.r2_key,
+    heading: c.heading,
+    headingTrail: c.headingTrail,
+    frontmatter: fm,
+    token_count: count(c.text),
+    oversized_code: false,
+    oversized: count(c.text) > o.maxEmbedTokens,
+    text: c.text,
+    flags: c.flags || [],
+    // permission metadata (null for prose chunks)
+    perm_name: c.kind === 'perm' ? c.name : null,
+    app_guid: c.app_guid || null,
+    delegated_guid: c.delegated_guid || null,
+    principal: c.principal || null,
+    family: c.family || null,
+    action: c.action || null,
+    priv_rank: (c.priv_rank !== undefined ? c.priv_rank : null),
+    scope_all: (c.scope_all !== undefined ? c.scope_all : null),
+    display_text: c.display_text || null,
+  }));
+}
+
 // ---- entry point ---------------------------------------------------------
 
 export function chunkDocument(rawBody, meta, opts = {}) {
