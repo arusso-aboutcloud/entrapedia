@@ -15,13 +15,14 @@ name: pages
 # Recommended:
 #   CLOUDFLARE_ACCOUNT_ID - account id.
 
+# NOTE: the live deploy uses Cloudflare Pages GIT INTEGRATION (Cloudflare builds
+# on push once the repo is connected in the dashboard) -- see docs/OPERATIONS.md.
+# This workflow is the ALTERNATIVE wrangler/Direct-Upload path; it is
+# dispatch-only so it does not auto-run (and auto-fail) on every push. It needs
+# `Cloudflare Pages:Edit` on CLOUDFLARE_API_TOKEN, which the token currently
+# lacks. Use it only if you prefer CI deploys over git integration.
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - 'frontend/**'
-      - '.github/workflows/pages.yml'
 
 permissions:
   contents: read

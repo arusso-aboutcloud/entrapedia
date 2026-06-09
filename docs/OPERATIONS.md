@@ -288,19 +288,43 @@ The doc proxy (`/api/doc`) needs no secret -- it fetches the document's public
 GitHub source. The homepage shows a clearly-labelled SAMPLE result set before
 the first query, so the design renders without any backend.
 
-### Deploy (CI: `.github/workflows/pages.yml`)
+### Deploy -- git integration (primary)
 
-Push to `main` touching `frontend/**` (or run the `pages` workflow manually).
-The job: build the Astro site, ensure the Pages project, pipe the
-`TRIGGER_SECRET` repo secret into the project server-side
-(`wrangler pages secret put`), then `wrangler pages deploy dist`. The Functions
-in `frontend/functions/` are bundled automatically (wrangler runs from
-`frontend/`). Production deployments alias to `entrapedia.pages.dev`.
+The frontend deploys via **Cloudflare Pages git integration**: Cloudflare builds
+and deploys on push, no CI token needed. The Pages project `entrapedia` exists
+with build settings already configured (root dir `frontend`, build command
+`npm run build`, output `dist`); Functions in `frontend/functions/` are
+auto-detected.
 
-**Token scope:** Pages deploy needs `Cloudflare Pages:Edit` on
-`CLOUDFLARE_API_TOKEN` (in addition to the Workers/D1/R2/Vectorize/AI scopes the
-worker deploy uses). If the Pages job 403s on create/deploy, add that scope to
-the repo secret token. The Pages project itself was pre-created via the API.
+One-time connect (dashboard; the GitHub-App authorization cannot be done via the
+API):
+
+1. Cloudflare dashboard -> Workers & Pages -> the `entrapedia` Pages project is
+   Direct-Upload; to use git, create/connect a Pages project to the
+   `arusso-aboutcloud/entrapedia` repo ("Connect to Git"), authorizing the
+   Cloudflare Pages GitHub App for the repo. (If the name `entrapedia` is taken
+   by the placeholder project, delete that empty project first.)
+2. Build settings: **root directory** `frontend`, **build command**
+   `npm run build`, **output directory** `dist`, production branch `main`.
+   Optionally limit builds to `frontend/*` path changes.
+3. **Live search secret:** in the project's Settings -> Environment variables,
+   add `TRIGGER_SECRET` (encrypted) = the worker's `/search` secret. Until it is
+   set, the site is fully live but `/api/search` returns 503 (the homepage SAMPLE
+   set and doc pages still render). `SEARCH_ORIGIN` is optional (defaults to the
+   workers.dev origin in code).
+
+After connecting, every push touching `frontend/**` triggers a Cloudflare build +
+deploy to `entrapedia.pages.dev`.
+
+### Deploy -- wrangler / CI (alternative)
+
+`.github/workflows/pages.yml` (dispatch-only) builds and deploys via
+`wrangler pages deploy`, piping the `TRIGGER_SECRET` repo secret into the project
+server-side. It needs **`Cloudflare Pages:Edit`** on `CLOUDFLARE_API_TOKEN` (the
+token currently has only the Workers/D1/R2/Vectorize/AI scopes, so this path 403s
+until that scope is added). Use it only if you prefer CI deploys over git
+integration. The single advantage over git integration: it sets `TRIGGER_SECRET`
+automatically from the existing repo secret.
 
 ### Search proxy: protecting the secret and the neuron budget
 
