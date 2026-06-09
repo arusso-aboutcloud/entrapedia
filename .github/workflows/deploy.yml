@@ -60,6 +60,10 @@ on:
         description: 'Search trust scope: official | community | both'
         type: string
         default: 'both'
+      top_k:
+        description: 'Search top_k (search mode)'
+        type: string
+        default: '5'
   push:
     branches: [main]
     paths:
@@ -137,7 +141,10 @@ jobs:
             fi
           elif [ "$MODE" = "search" ]; then
             ENDPOINT="/search"
-            BODY=$(jq -nc --arg q "${{ inputs.query }}" --arg s "${{ inputs.scope }}" '{query:$q, trust_scope:$s, top_k:5}')
+            TOPK="${{ inputs.top_k }}"; [ -z "$TOPK" ] && TOPK=5
+            # Multiple test queries may be passed in one run, delimited by |||
+            mapfile -t QUERIES < <(printf '%s' "${{ inputs.query }}" | sed 's/|||/\n/g')
+            N=${#QUERIES[@]}
           else
             Q="max=${{ inputs.max }}"
             SRC="${{ inputs.source }}"
@@ -158,6 +165,8 @@ jobs:
               fi
             fi
             if [ "$MODE" = "search" ]; then
+              Q="${QUERIES[$((i-1))]}"
+              BODY=$(jq -nc --arg q "$Q" --arg s "${{ inputs.scope }}" --argjson k "$TOPK" '{query:$q, trust_scope:$s, top_k:$k}')
               resp=$(curl -sS --retry 4 --retry-delay 3 --retry-all-errors -X POST \
                 -H "Authorization: Bearer $TRIGGER_SECRET" -H 'Content-Type: application/json' \
                 -d "$BODY" "$URL$ENDPOINT" || true)
@@ -167,9 +176,9 @@ jobs:
             fi
             if [ -z "$resp" ]; then echo "iter $i: request failed after retries, continuing"; sleep "$SLEEP"; continue; fi
             if [ "$MODE" = "search" ]; then
-              echo "=== iter $i ==="
-              echo "$resp" | jq '{cache_hit, neurons, count, results: [.results[] | {score, reranked_score, trust, layer, doc_title, heading, source_url: .citation.source_url, license: .citation.license, attribution: .citation.attribution, snippet: (.snippet[0:240])}]}' 2>/dev/null \
-                || { echo "non-json or error:"; echo "$resp" | head -c 400; }
+              echo "=== Q$i: ${QUERIES[$((i-1))]} ==="
+              echo "$resp" | jq '{cache_hit, neurons, identifier_match, least_privilege, short_circuit, count, results: [.results[] | {rank: null, match_type, score, reranked_score, permission, privilege, principal, trust, doc_title, app_guid, source_url: .citation.source_url, license: .citation.license}]}' 2>/dev/null \
+                || { echo "non-json or error:"; echo "$resp" | head -c 500; }
             elif [ "$MODE" = "embed" ]; then
               if [ "${{ inputs.rechunk }}" = "true" ]; then
                 echo "$resp" | jq -c '{mode, doc_id, parsed, perm, prose, embedded, neurons, deleted_old, today:.neurons_today_after, cap:.daily_cap, status, error}' 2>/dev/null \
