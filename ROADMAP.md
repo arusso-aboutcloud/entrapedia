@@ -42,13 +42,19 @@ Authenticated `/search` endpoint: query embed (cache-miss only) → Vectorize se
 
 Flagship-topic fix for the LP-verb-resource limitation above. The Graph **api-reference method pages** (already being ingested into the corpus) publish, per operation, the **least-privileged permission** (and higher-privileged alternatives). The capability: retrieval over those pages that, for an operation query ("least privilege to list applications" / "minimal permission to send mail"), surfaces the operation's published least-privileged permission — correct, source-grounded, cited; **no heuristic name→permission mapping**. **Prerequisite:** the api-reference method-page set embedded (backfill in flight; this chunk queues right after it reaches that set). Spec (plan only) lives in `docs/specs/api-reference-least-privilege.md`; build gated on prerequisite + spec review.
 
-## Chunk 5 — Frontend foundation
+## Chunk 5 — Frontend foundation — built (iterating on aesthetics)
 
-Cloudflare Pages, Astro/Starlight. Chakra Petch typography, neo-brutalist layout, trust-tier visual treatment, per-page source-attribution footers, current-state plus history page model. Plain styling; no hero engine yet.
+Static Astro site under `frontend/`, deployed to Cloudflare Pages (`entrapedia.pages.dev`). Chakra Petch + neo-brutalist/cyberpunk-glow design ("exposed concrete meets terminal glow"). Search experience over the `/search` API via a server-side proxy (secret never client-side; input-capped, edge-cached, soft-rate-limited); ranked cited results with **semantic trust-tier encoding** (official = cyan glow, legacy/heritage = amber archival, community = matte/verify) and honest `result_kind` + least-privilege `advisory` rendering. Doc view renders a corpus document with a source-attribution footer and a reserved current-state + history page model (DESIGN.md §7). Foundation is a first opinionated version; look-and-feel iterates from rendered output. WebGL hero NOT built (chunk 6). Public launch (custom domain `entrapedia.aboutcloud.io`, removing the worker auth) is a later step — the corpus is still embedding.
+
+Deferred within chunk 5 follow-up: progressive-enhancement / no-JS search fallback (search is currently client-rendered); hardening the proxy rate limit to a Durable-Object/KV token bucket for public launch.
 
 ## Chunk 6 — WebGL logo-evolution hero
 
-Self-contained WebGL component depicting the Azure AD to Entra ID brand lineage. Isolated by design — depends on nothing else and is the last visual chunk. Brand assets and dates to be researched for historical accuracy when this chunk is scoped.
+Self-contained WebGL component depicting the Azure AD to Entra ID brand lineage. Isolated by design — depends on nothing else and is the last visual chunk. Brand assets and dates to be researched for historical accuracy when this chunk is scoped. The frontend design language already reserves an archival/heritage treatment (legacy layer) for it to slot into.
+
+## After chunk 5 — public launch
+
+Custom domain `entrapedia.aboutcloud.io`, removing the worker's `/search` auth in favour of the public rate-limited proxy path, and final content review. Gated on the corpus reaching useful embedding coverage. Not a visual chunk.
 
 ## After chunk 4 — LLM generation layer
 

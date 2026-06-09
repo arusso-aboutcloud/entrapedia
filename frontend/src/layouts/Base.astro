@@ -1,0 +1,49 @@
+---
+const { title = 'Entrapedia', description = 'The Microsoft Entra ID encyclopedia — current-state reference and Azure AD heritage. Retrieval-grounded, cited, Cloudflare-native.' } = Astro.props;
+import '../styles/global.css';
+const year = 2026;
+---
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{title}</title>
+  <meta name="description" content={description} />
+  <meta name="color-scheme" content="dark" />
+  <meta name="theme-color" content="#07090d" />
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@300;400;500;600;700&display=swap" />
+</head>
+<body>
+  <div class="shell">
+    <div class="frame">
+      <header class="masthead boot b1">
+        <p class="wordmark">ENTRA<b>PEDIA</b></p>
+        <span class="formerly">Azure AD &rarr; Entra ID</span>
+        <p class="tagline">// the microsoft entra id encyclopedia &mdash; current-state reference + azure ad heritage</p>
+      </header>
+
+      <div class="statusbar boot b2">
+        <span><span class="dot">&#9679;</span> live</span>
+        <span>mode: <b>retrieval-grounded</b></span>
+        <span>corpus: <b>embedding</b></span>
+        <span>ai generation: off</span>
+        <span>stack: cloudflare free-tier</span>
+      </div>
+
+      <main>
+        <slot />
+      </main>
+
+      <footer class="sitefoot">
+        <span class="build">entrapedia &middot; <b>v0 foundation</b></span>
+        <span>content: cc-by-4.0 / mit &middot; code: mit</span>
+        <span>&copy; {year} &middot; not affiliated with microsoft</span>
+      </footer>
+    </div>
+  </div>
+</body>
+</html>

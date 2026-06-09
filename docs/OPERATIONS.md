@@ -256,3 +256,66 @@ embed budget overshot to the 10,000 real ceiling (`error 4006`), which also
 broke retrieval. `EMBED_NEURON_BUDGET` is therefore **6000** (estimated; ~7.5k
 real), reserving ~2.5k real/day so `/search` query embeds never trip 4006. If
 4006 still appears, lower it further.
+
+## Frontend (chunk 5: Cloudflare Pages)
+
+Static Astro site under `frontend/`, deployed to the Cloudflare Pages project
+`entrapedia` (`https://entrapedia.pages.dev`). It ships two same-origin Pages
+Functions under `frontend/functions/api/`: `search.js` (proxy to the worker
+`/search`) and `doc.js` (renders a corpus doc from its public source).
+
+### Run locally
+
+```
+cd frontend
+npm install
+npm run dev          # Astro dev server (homepage renders the labelled SAMPLE set;
+                     # live /api/* need the Functions runtime)
+npm run build        # -> frontend/dist
+```
+
+Functions need the Pages runtime. Either deploy, or run the Functions locally
+with a real secret in `frontend/.dev.vars` (NOT committed):
+
+```
+# frontend/.dev.vars
+TRIGGER_SECRET = "<the worker /search secret>"
+# optional override; defaults to the workers.dev origin in the code
+SEARCH_ORIGIN  = "https://entrapedia.<subdomain>.workers.dev"
+```
+
+The doc proxy (`/api/doc`) needs no secret -- it fetches the document's public
+GitHub source. The homepage shows a clearly-labelled SAMPLE result set before
+the first query, so the design renders without any backend.
+
+### Deploy (CI: `.github/workflows/pages.yml`)
+
+Push to `main` touching `frontend/**` (or run the `pages` workflow manually).
+The job: build the Astro site, ensure the Pages project, pipe the
+`TRIGGER_SECRET` repo secret into the project server-side
+(`wrangler pages secret put`), then `wrangler pages deploy dist`. The Functions
+in `frontend/functions/` are bundled automatically (wrangler runs from
+`frontend/`). Production deployments alias to `entrapedia.pages.dev`.
+
+**Token scope:** Pages deploy needs `Cloudflare Pages:Edit` on
+`CLOUDFLARE_API_TOKEN` (in addition to the Workers/D1/R2/Vectorize/AI scopes the
+worker deploy uses). If the Pages job 403s on create/deploy, add that scope to
+the repo secret token. The Pages project itself was pre-created via the API.
+
+### Search proxy: protecting the secret and the neuron budget
+
+`TRIGGER_SECRET` is held **server-side** in the Pages Function and never shipped
+to the browser. Defence in depth on the public search route:
+
+1. **Input caps** -- query <= 256 chars, `top_k` <= 10, scope allowlist.
+2. **Edge cache** -- identical queries served from `caches.default` for 10 min
+   (zero worker hits, zero neurons on repeat).
+3. **Soft per-IP limit** -- 30 req/60s, per-isolate (best-effort first line).
+4. **Hard backstop** -- the worker's own daily neuron cap + `answer_cache` mean
+   even unbounded proxy traffic cannot overspend neurons (it serves cached
+   results or returns 4006). The budget is structurally protected regardless of
+   the proxy.
+
+(3) is per-isolate, not global; the hardening for true public launch is a
+Durable Object or KV token bucket. Public launch (custom domain, removing the
+worker's auth) is a later step -- not chunk 5.

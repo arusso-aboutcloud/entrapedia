@@ -1,0 +1,87 @@
+name: pages
+
+# Builds the Entrapedia Astro frontend and deploys it (static assets + the
+# /api/* Pages Functions search/doc proxy) to the Cloudflare Pages project
+# `entrapedia`. Separate from the worker deploy (deploy.yml) and triggered only
+# on frontend changes. No marketplace actions (plain git clone + pinned npx
+# wrangler), consistent with deploy.yml.
+#
+# Required repository secrets:
+#   CLOUDFLARE_API_TOKEN  - needs Cloudflare Pages:Edit (in addition to the
+#                           Workers/D1/R2/Vectorize/AI scopes deploy.yml uses).
+#   TRIGGER_SECRET        - shared secret guarding the worker's /search; piped
+#                           server-side into the Pages project so the browser
+#                           never sees it. Without it the proxy returns 503.
+# Recommended:
+#   CLOUDFLARE_ACCOUNT_ID - account id.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/pages.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: entrapedia-pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      WRANGLER: npx --yes wrangler@4.98.0
+    steps:
+      - name: Checkout (public repo, no marketplace action)
+        run: git clone --depth 1 "https://github.com/${{ github.repository }}" repo
+
+      - name: Set up Node
+        run: |
+          set -euo pipefail
+          node --version
+          npm --version
+
+      - name: Build (Astro)
+        working-directory: repo/frontend
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+          npm run build
+          test -f dist/index.html
+
+      - name: Ensure Pages project exists
+        working-directory: repo/frontend
+        run: |
+          set -euo pipefail
+          if $WRANGLER pages project create entrapedia --production-branch main 2>create.log; then
+            echo "created project"
+          else
+            grep -qiE "already (exists|created)|name.*taken|8000007" create.log && echo "project already exists" || { cat create.log; exit 1; }
+          fi
+
+      - name: Provision proxy secret (server-side; never shipped to the client)
+        working-directory: repo/frontend
+        env:
+          TRIGGER_SECRET: ${{ secrets.TRIGGER_SECRET }}
+        run: |
+          set -euo pipefail
+          if [ -n "${TRIGGER_SECRET:-}" ]; then
+            printf '%s' "$TRIGGER_SECRET" | $WRANGLER pages secret put TRIGGER_SECRET --project-name entrapedia
+          else
+            echo "TRIGGER_SECRET repo secret not set; /api/search will return 503 until it is."
+          fi
+
+      - name: Deploy to Cloudflare Pages
+        working-directory: repo/frontend
+        run: |
+          set -euo pipefail
+          OUT=$($WRANGLER pages deploy dist --project-name entrapedia --branch main --commit-dirty=true 2>&1) || { echo "$OUT"; exit 1; }
+          echo "$OUT"
+          URL=$(printf '%s\n' "$OUT" | grep -oE 'https://[a-z0-9.-]+\.pages\.dev' | head -1 || true)
+          echo "Deployed: ${URL:-<no url captured>}  (production alias: https://entrapedia.pages.dev)"
