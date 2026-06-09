@@ -177,7 +177,7 @@ jobs:
             if [ -z "$resp" ]; then echo "iter $i: request failed after retries, continuing"; sleep "$SLEEP"; continue; fi
             if [ "$MODE" = "search" ]; then
               echo "=== Q$i: ${QUERIES[$((i-1))]} ==="
-              echo "$resp" | jq '{cache_hit, neurons, identifier_match, least_privilege, short_circuit, count, results: [.results[] | {rank: null, match_type, score, reranked_score, permission, privilege, principal, trust, doc_title, app_guid, source_url: .citation.source_url, license: .citation.license}]}' 2>/dev/null \
+              echo "$resp" | jq '{cache_hit, neurons, identifier_match, least_privilege, least_privilege_grounded, short_circuit, advisory: (.advisory.note // null), count, results: [.results[] | {match_type, result_kind, score, reranked_score, permission, privilege, principal, trust, doc_title, source_url: .citation.source_url}]}' 2>/dev/null \
                 || { echo "non-json or error:"; echo "$resp" | head -c 500; }
             elif [ "$MODE" = "embed" ]; then
               if [ "${{ inputs.rechunk }}" = "true" ]; then
