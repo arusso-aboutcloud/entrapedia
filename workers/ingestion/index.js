@@ -634,6 +634,12 @@ async function runRechunkPermissions(env, opts = {}) {
     stat.embedded += batch.length;
   }
 
+  // Record neuron spend NOW, before the (riskier) delete step, so a swap failure
+  // can never lose the accounting (the embed neurons were really spent).
+  st.neurons += budget.neurons;
+  budget.sub--;
+  await saveEmbedBudget(env, st);
+
   // Completion: only swap out the old vectors once the full new set is present.
   budget.sub--;
   const after = await env.DB.prepare('SELECT chunk_id, vector_id FROM chunks WHERE doc_id = ?').bind(docId).all();
@@ -644,7 +650,8 @@ async function runRechunkPermissions(env, opts = {}) {
     const orphans = after.results.filter((r) => !newIds.has(r.chunk_id));
     if (orphans.length) {
       const ovids = orphans.map((r) => r.vector_id).filter(Boolean);
-      for (let o = 0; o < ovids.length; o += 200) { budget.sub--; await env.VECTORIZE.deleteByIds(ovids.slice(o, o + 200)); }
+      // Vectorize delete_by_ids caps at 100 ids per call.
+      for (let o = 0; o < ovids.length; o += 100) { budget.sub--; await env.VECTORIZE.deleteByIds(ovids.slice(o, o + 100)); }
       for (let o = 0; o < orphans.length; o += RECHUNK_BATCH) {
         budget.sub--;
         await env.DB.batch(orphans.slice(o, o + RECHUNK_BATCH).map((r) => env.DB.prepare('DELETE FROM chunks WHERE chunk_id = ?').bind(r.chunk_id)));
@@ -658,9 +665,6 @@ async function runRechunkPermissions(env, opts = {}) {
     stat.status = 'in_progress';
   }
 
-  st.neurons += budget.neurons;
-  budget.sub--;
-  await saveEmbedBudget(env, st);
   stat.neurons_today_after = st.neurons;
   stat.subrequests_remaining = budget.sub;
   return stat;
