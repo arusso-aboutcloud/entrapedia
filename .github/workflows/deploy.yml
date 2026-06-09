@@ -48,6 +48,10 @@ on:
         description: 'embed mode: one-permission-per-chunk re-embed of permissions-reference (mode=rechunk)'
         type: string
         default: ''
+      neurons:
+        description: 'embed mode: daily neuron-cap override for this invocation (blank = default 6000)'
+        type: string
+        default: ''
       query:
         description: 'Search query (search mode)'
         type: string
@@ -125,10 +129,11 @@ jobs:
           SLEEP="${{ inputs.sleep_s }}"
           MODE="${{ inputs.mode }}"
           if [ "$MODE" = "embed" ]; then
+            NQS=""; if [ -n "${{ inputs.neurons }}" ]; then NQS="&neurons=${{ inputs.neurons }}"; fi
             if [ "${{ inputs.rechunk }}" = "true" ]; then
-              ENDPOINT="/embed?mode=rechunk&doc=permissions-reference"
+              ENDPOINT="/embed?mode=rechunk&doc=permissions-reference${NQS}"
             else
-              ENDPOINT="/embed?docs=${{ inputs.docs }}"
+              ENDPOINT="/embed?docs=${{ inputs.docs }}${NQS}"
             fi
           elif [ "$MODE" = "search" ]; then
             ENDPOINT="/search"
