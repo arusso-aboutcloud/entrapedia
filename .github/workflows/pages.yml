@@ -48,11 +48,6 @@ jobs:
           node --version
           npm --version
 
-      - name: Diagnose token permissions (whoami)
-        run: |
-          echo "--- wrangler whoami (token scopes) ---"
-          $WRANGLER whoami || true
-
       - name: Build (Astro)
         working-directory: repo/frontend
         run: |
