@@ -38,9 +38,15 @@ Authenticated `/search` endpoint: query embed (cache-miss only) → Vectorize se
 
 **Known limitation (interim honest behavior).** Least-privilege *intent* over a generic operation ("least privilege to list applications") is not answerable from the flat permissions-reference list — the minimal permission per operation is published on the Graph api-reference method pages. No heuristic guessing on this trust-critical topic: `/search` returns `least_privilege_grounded: false` + an `advisory` pointing to the operation's api-reference method page. Proper fix is the next chunk below.
 
-## Chunk 4b — api-reference least-privilege retrieval — near-term priority
+## Chunk 4b — api-reference retrieval quality (least-privilege + snippet-tab hygiene) — near-term priority
 
-Flagship-topic fix for the LP-verb-resource limitation above. The Graph **api-reference method pages** (already being ingested into the corpus) publish, per operation, the **least-privileged permission** (and higher-privileged alternatives). The capability: retrieval over those pages that, for an operation query ("least privilege to list applications" / "minimal permission to send mail"), surfaces the operation's published least-privileged permission — correct, source-grounded, cited; **no heuristic name→permission mapping**. **Prerequisite:** the api-reference method-page set embedded (backfill in flight; this chunk queues right after it reaches that set). Spec (plan only) lives in `docs/specs/api-reference-least-privilege.md`; build gated on prerequisite + spec review.
+Two api-reference-quality items, both gated on the same api-reference backfill coverage, so they queue together.
+
+**(a) Least-privilege retrieval (flagship-topic fix for the LP-verb-resource limitation above).** The Graph **api-reference method pages** (already being ingested into the corpus) publish, per operation, the **least-privileged permission** (and higher-privileged alternatives). The capability: retrieval over those pages that, for an operation query ("least privilege to list applications" / "minimal permission to send mail"), surfaces the operation's published least-privileged permission — correct, source-grounded, cited; **no heuristic name→permission mapping**. Spec (plan only) lives in `docs/specs/api-reference-least-privilege.md`; build gated on prerequisite + spec review.
+
+**(b) Snippet-tab-chunk corpus hygiene (prioritized).** Graph api-reference pages embed code-sample "snippet tab" fragments (the language-switcher snippets — C#/JavaScript/Java/Go/PowerShell/etc.) that produce **high-volume, low-semantic-content chunks**. These pollute retrieval relevance across many queries — surfaced when `?q=phs` returned beta api-reference snippet-tab chunks instead of relevant content — and the impact **grows as the api-reference backfill (~80% of the corpus) embeds**. This is corpus-wide retrieval hygiene, **not** a phs-specific edge case — the same class of structural-noise filtering as the earlier `/includes/` and repo-meta exclusions. Fix pattern mirrors the permissions-reference fix: identify the structural noise, filter/handle the snippet-tab chunks, re-embed the affected api-reference docs. Folded here because it is api-reference-quality work on the same backfill gate.
+
+**Prerequisite (both):** the api-reference method-page set embedded (backfill in flight; this chunk queues right after it reaches that set).
 
 ## Chunk 5 — Frontend foundation — built (iterating on aesthetics)
 
@@ -56,11 +62,16 @@ Self-contained WebGL component depicting the Azure AD to Entra ID brand lineage.
 
 Custom domain `entrapedia.aboutcloud.io`, removing the worker's `/search` auth in favour of the public rate-limited proxy path, and final content review. Gated on the corpus reaching useful embedding coverage. Not a visual chunk.
 
+**Prerequisites (must clear before exposing the proxy publicly):**
+
+- **Global rate limiter (blocker).** The current proxy rate limit is **per-isolate** (an in-memory counter per Worker isolate), so the effective limit is **leaky** — fine for the private dev site, NOT acceptable for public exposure. A leaky limiter lets a scraper / heavy visitor exceed the intended limit and drain the daily neuron allocation, which would **stall the embedding backfill**. Upgrade to a **global counter — a Durable Object** (or KV as a lighter, weaker-consistency alternative) — before launch. This complements, not replaces, the neuron backstop: the backstop is the hard floor, but for public exposure the rate limiter itself must actually be tight.
+
 ## After chunk 4 — LLM generation layer
 
 Once retrieval is validated, add tiered model routing and grounded, cited generation under the safety contract (KQL informative-only; Graph/PowerShell retrieval-grounded with citations; web search opt-in; no vision). Slots in as its own chunk; not before retrieval quality is established.
 
 ## Deferred / conditional
 
+- **Bare-abbreviation retrieval (known limitation, lower priority).** Bare abbreviations (e.g. "phs" = Password Hash Sync) embed poorly and retrieve weakly — abbreviation→expansion is a genuine retrieval challenge. Logged as a known limitation; no bespoke expansion mechanism now. Note that fixing chunk 4b item (b) — snippet-tab hygiene — will **partially** improve these queries by removing the low-content noise that currently dominates their results, even without abbreviation handling.
 - Microsoft 365 full doc corpus — large, only partially Entra-relevant, expensive to embed. Revisit only with explicit scope approval.
 - Public launch tasks (final content review, demos/blog) — after the site is functional. The repository is already public; licensing is settled (MIT / CC-BY-4.0).
