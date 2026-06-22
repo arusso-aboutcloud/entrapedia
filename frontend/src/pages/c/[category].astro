@@ -1,0 +1,44 @@
+---
+import Base from '../../layouts/Base.astro';
+import { CATEGORIES } from '../../lib/categories.mjs';
+import { getCollection } from 'astro:content';
+
+export async function getStaticPaths() {
+  const arts = await getCollection('articles');
+  return CATEGORIES.map((c) => ({
+    params: { category: c.id },
+    props: {
+      category: c,
+      articles: arts.filter((a) => a.data.category === c.id).sort((a, b) => a.data.title.localeCompare(b.data.title)),
+    },
+  }));
+}
+
+const { category, articles } = Astro.props;
+const crumbs = [{ label: 'Home', href: '/' }, { label: category.label }];
+---
+<Base title={`${category.label} - Entrapedia`} breadcrumbs={crumbs} activeCategory={category.id}>
+  <section class="cat-head">
+    <span class="tag">category {category.n}</span>
+    <h1>{category.label}</h1>
+    <p class="cat-blurb">{category.blurb}</p>
+  </section>
+
+  <section class="cat-list">
+    {articles.length === 0 ? (
+      <div class="notice">No articles authored in this category yet. The category is part of the editorial spine (DESIGN.md 3.1); the broad-but-shallow authoring pass &mdash; curator work, not bot-generated &mdash; will fill it in.</div>
+    ) : (
+      articles.map((a) => (
+        <a class={`artrow ${a.data.layer === 'legacy' ? 't-legacy' : 't-official'}`} href={`/a/${a.data.slug}`}>
+          <div class="ar-top">
+            <span class={`badge ${a.data.layer === 'legacy' ? 't-legacy' : 't-official'}`}>{a.data.layer === 'legacy' ? 'legacy' : 'official'}</span>
+            {a.data.draft && <span class="draftflag">draft exemplar</span>}
+          </div>
+          <h3>{a.data.title}</h3>
+          <p>{a.data.summary}</p>
+          <span class="ar-go">Read &rarr;</span>
+        </a>
+      ))
+    )}
+  </section>
+</Base>

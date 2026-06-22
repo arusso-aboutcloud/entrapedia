@@ -343,3 +343,73 @@ to the browser. Defence in depth on the public search route:
 (3) is per-isolate, not global; the hardening for true public launch is a
 Durable Object or KV token bucket. Public launch (custom domain, removing the
 worker's auth) is a later step -- not chunk 5.
+
+## Authoring an article (the encyclopedia layer)
+
+Articles are the product (DESIGN.md 1-3). They are **git-versioned markdown**,
+authored by the curator -- not in D1, never auto-generated from retrieval.
+
+### Where files live
+
+```
+frontend/src/content/articles/<category>/<slug>.md
+```
+
+`<category>` is one of the nine ids in `frontend/src/lib/categories.mjs`
+(`fundamentals`, `identity`, `access`, `protection`, `governance`,
+`applications`, `agent-id`, `external`, `network-access`). The article is an
+Astro content collection entry; the schema is `frontend/src/content.config.ts`.
+
+### Frontmatter
+
+```yaml
+---
+title: Conditional Access
+slug: conditional-access          # unique; the URL is /a/<slug>
+category: access                  # one of the nine ids
+summary: One-sentence orientation shown on cards and the article header.
+tags: [conditional-access, mfa]
+layer: current                    # current | legacy  (legacy = amber heritage treatment)
+featured: true                    # surface on the landing "core concepts"
+last_reviewed: "2026-06-16"        # QUOTE dates (YAML would parse a bare date as an object)
+licensing_as_of: "2026-06-16"      # OPTIONAL; renders the dated "verify" licensing banner
+see_also: [azure-ad-b2c-external-id]   # slugs of related articles
+draft: true                       # marks "draft exemplar" until the curator signs off
+citations:                        # the cited sources used by the cited sections
+  - id: ca-overview
+    title: Conditional Access overview (Microsoft Entra documentation)
+    source_url: https://github.com/MicrosoftDocs/entra-docs/blob/main/docs/identity/conditional-access/overview.md
+    license: MIT
+    attribution: Microsoft Docs - MicrosoftDocs/entra-docs (MIT)
+---
+```
+
+### Body: the seven sections
+
+Use these exact H2 headings, in order. A rehype plugin badges each as AUTHORED or
+CITED automatically (it matches the heading text), so the heading text must match:
+
+```
+## What it is        (authored)   ## Current state   (cited)
+## Why it matters     (authored)   ## Licensing        (cited + dated)
+## How it relates     (authored)   ## History          (cited)
+## See also           (authored)
+```
+
+- **Authored** sections are the curator's voice -- plain prose, judgement, links.
+- **Cited** sections must ground every claim: write the prose with inline markdown
+  links to the real source URLs, and list those sources in frontmatter `citations`
+  (rendered as the article's "cited sources" attribution block, per DESIGN.md 5).
+  A claim-bearing line without a citation is a content bug.
+- **Licensing** is cited AND dated: set `licensing_as_of` and keep a visible
+  "verify, licensing changes" posture (the banner does this; reinforce it inline).
+- **Interlink**: link other articles by `/a/<slug>` inline (in How it relates) and
+  via `see_also` -- this is the web-of-knowledge.
+
+### How it deploys
+
+Articles build statically (Astro content collection -> `/a/<slug>` pages, listed on
+the landing and `/c/<category>`). Commit the markdown and push to `main`; the
+Pages deploy (`.github/workflows/pages.yml`, or git integration) rebuilds. No D1
+write, no embedding, no neuron cost -- the article is pure git content. The cited
+*evidence* it links to comes from the corpus/retrieval layer, which is separate.

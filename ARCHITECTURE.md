@@ -1,32 +1,38 @@
 # Entrapedia — Architecture
 
-Cloudflare-native, free-tier, trust-tiered. This document describes the system shape; `DESIGN.md` holds the binding contracts.
+Cloudflare-native, free-tier, trust-tiered. **Encyclopedia-first** (per the re-founded `DESIGN.md`): a curated article layer is the product; the corpus/ingestion/retrieval stack is the cited **evidence layer** beneath it, unchanged in behaviour. This document describes the system shape; `DESIGN.md` holds the binding contracts.
 
 ## Layers
 
 ```
-Sources (trust-tiered)
-        |
-        v
-Ingestion worker (cron)  -- fetch, diff, chunk, embed changed-only
-        |
-        v
-Storage:  R2 (raw markdown)  |  D1 (index, metadata, cache)  |  Vectorize (embeddings)
-        |
-        v
-Query worker  -- search, RAG retrieve, cited answers
-              -- (LLM generation + web search: later, opt-in)
-        |
-        v
-Pages frontend (Astro, Chakra Petch, brutalist)
-        |
-        v
 Users and engineers
+        ^   browse, read, wander
+        |
+ENCYCLOPEDIA LAYER  (primary -- the product)
+  Curated articles  -- git-versioned markdown, AUTHORED + CITED, seven sections,
+                       nine-category taxonomy, interlinked, heritage lens
+  Pages frontend    -- browsable landing + category nav + article render;
+                       search demoted to a corner utility
+        ^   cited evidence  +  utility search
+        |   (search reached via a secret-safe, rate-limited Pages Function proxy)
+EVIDENCE LAYER  (supporting subsystem -- as built)
+  Query worker (/search)  -- embed -> Vectorize retrieve -> trust re-rank -> cited
+        ^
+        |
+  Storage:  R2 (raw markdown) | D1 (registry, per-permission metadata, cache) | Vectorize
+        ^
+        |
+  Ingestion worker (cron)  -- fetch, diff, chunk, embed changed-only
+        ^
+        |
+  Sources (trust-tiered: official / community; layer current / legacy)
 ```
 
-A rendered SVG of this diagram lives at `docs/architecture.svg`.
+A rendered SVG of an earlier (retrieval-first) framing lives at `docs/architecture.svg`; the layered shape above supersedes it.
 
 ## Components
+
+**Encyclopedia layer / article system (primary).** The product itself: authored, browsable, interlinked concept articles (DESIGN.md §3). Articles are **git-versioned markdown** in `frontend/src/content/articles/<category>/<slug>.md` (an Astro content collection) — never in D1; the curator's crown-jewel editorial work, PR-reviewable and diffable. Each article follows the seven-section model split into **authored** sections (the curator's voice: What it is / Why it matters / How it relates / See also) and **cited** sections (corpus-grounded, every claim links its source: Current state / Licensing / History), badged AUTHORED vs CITED at render by a rehype plugin. Frontmatter carries metadata + the cited sources; `layer: legacy` articles get the amber archival/heritage treatment. The frontend renders a **browsable landing** (nine-category grid, featured concepts, a "start here", and a heritage entry point — *not* a search box), persistent **category nav**, breadcrumbs, per-article **table of contents**, and **see-also/inline interlinks** (the web-of-knowledge). Article bodies are authored + cited, **never auto-generated from retrieval**. The corpus/retrieval stack below is the evidence the cited sections rest on; the same engine also powers the demoted utility search at `/search`.
 
 **Sources.** Split by trust level (see `DESIGN.md` §3). Official Microsoft sources are authoritative; community sources are attributed and flagged. The split is carried through every downstream layer as a per-chunk trust attribute.
 
@@ -42,13 +48,13 @@ The Tier-A fetch/store stage (`workers/ingestion/`, chunk 3a) resolves each repo
 - **Vectorize** (`entrapedia-chunks`, 768 dimensions, cosine metric; embedding model `@cf/baai/bge-base-en-v1.5`) — embeddings for RAG retrieval. Trust separation is by metadata filter, with metadata indexes on `trust`, `source`, and `content_type`. (Free-tier availability to be confirmed on the account dashboard before the storage chunk; fallback is Worker-side similarity over vectors in D1/R2.)
 - **KV** (`entrapedia-cache`) — answer cache keyed by normalized question.
 
-**Query worker / retrieval (chunk 4).** An authenticated `/search` endpoint (on the same worker) returns retrieved, ranked, **cited** chunks — **no model generation**. Flow: normalize the query → cache lookup in `answer_cache` (zero neurons on a fresh hit) → on miss, embed the query once with bge-base (prefixed with the bge s2p query instruction) → Vectorize similarity search with indexed metadata filters (`trust`, `source`, `content_type`; `layer` post-filtered) → **trust re-rank** (an additive bonus so official outranks community at similar relevance; an `official`/`community`/`both` scope filter selects the pool) → hydrate each result's snippet by re-deriving the chunk from its R2 body with the same pure chunker (deduped by doc; chunk text isn't stored), and assemble citations (`source_url`/`license`/`attribution` per §4) from the `documents` row → cache the ranked result list and return. The cache is a query→results cache (not generated answers) with a short TTL while the index is still filling. Retrieval embeds (~1 neuron) share the daily neuron ceiling with the backfill; the embed budget reserves headroom so they never starve it. The generation layer (tiered model routing, grounded cited generation under the §5 safety contract) is a later chunk, gated on retrieval quality. Web search is an explicit opt-in mode, never the default path.
+**Query worker / retrieval (evidence layer; chunk 4).** The cited-evidence engine beneath the encyclopedia — it grounds the articles' cited sections and powers the demoted utility search. An authenticated `/search` endpoint (on the same worker) returns retrieved, ranked, **cited** chunks — **no model generation**. Flow: normalize the query → cache lookup in `answer_cache` (zero neurons on a fresh hit) → on miss, embed the query once with bge-base (prefixed with the bge s2p query instruction) → Vectorize similarity search with indexed metadata filters (`trust`, `source`, `content_type`; `layer` post-filtered) → **trust re-rank** (an additive bonus so official outranks community at similar relevance; an `official`/`community`/`both` scope filter selects the pool) → hydrate each result's snippet by re-deriving the chunk from its R2 body with the same pure chunker (deduped by doc; chunk text isn't stored), and assemble citations (`source_url`/`license`/`attribution` per §4) from the `documents` row → cache the ranked result list and return. The cache is a query→results cache (not generated answers) with a short TTL while the index is still filling. Retrieval embeds (~1 neuron) share the daily neuron ceiling with the backfill; the embed budget reserves headroom so they never starve it. The generation layer (tiered model routing, grounded cited generation under the §5 safety contract) is a later chunk, gated on retrieval quality. Web search is an explicit opt-in mode, never the default path.
 
 *Structured-reference chunking + identifier-aware matching (chunk 4 retrieval-quality fix).* The Graph permissions-reference page (`graph-docs:concepts/permissions-reference.md`) is chunked one-permission-per-chunk (each `### PermissionName` section is its own chunk carrying its OWN heading, with `perm_name`/`app_guid`/`delegated_guid`/`principal`/`family`/`action`/`priv_rank`/`scope_all` metadata in D1 and name-keyed vector ids `#perm=<Name>`). This replaced a merge-many-per-chunk scheme that mislabeled a least-privilege permission under its over-privileged sibling's heading. `/search` first runs an **identifier-aware** exact lookup: a literal permission name or GUID in the query resolves directly to that permission (Tier 0, pinned above dense; an identifier-only query skips the embed entirely — 0 neurons). A gated least-privilege re-rank bias nudges narrower permissions up *within the retrieved set* when a least-privilege cue is present. The structured path is allowlisted to permissions-reference only; all other docs keep the generic prose chunker.
 
 *Known limitation — least-privilege-by-operation.* A query expressing least-privilege *intent* over a generic operation ("least privilege to list applications") cannot be answered authoritatively from the permissions-reference list: the minimal permission for a specific operation is published per-operation on the Graph **api-reference method pages**, not in the flat permission list. The engine does not guess (no heuristic name→permission mapping on this trust-critical topic). Instead, when least-privilege intent is detected without a grounded permission (no exact name/GUID), `/search` returns `least_privilege_grounded: false` plus an `advisory` that the results are conceptual guidance and points to the operation's api-reference method page. The proper fix is grounded retrieval over those api-reference pages once they are embedded — a near-term priority chunk (see ROADMAP).
 
-**Pages frontend (chunk 5 foundation).** Static Astro site under `frontend/`, deployed to Cloudflare Pages (project `entrapedia`, `entrapedia.pages.dev`). Aesthetic: Chakra Petch (Google Fonts), neo-brutalist structure crossed with restrained cyberpunk glow on a dark base ("exposed concrete meets terminal glow"). **Trust tiers are encoded visually, not decoratively** — the same official-outranks-community semantics the retrieval engine enforces: `official` carries the cyan glow ("live/authoritative"), `legacy` (the `layer=legacy` Azure AD heritage) gets an amber dashed archival treatment ("formerly"), `community` is matte/muted with a "verify against Microsoft" flag. Body text is high-contrast near-white; glow is accent-only (accessibility).
+**Pages frontend — host of the encyclopedia + the utility search (chunk 5 + article system).** Static Astro site under `frontend/`, deployed to Cloudflare Pages (project `entrapedia`, `entrapedia.pages.dev`). Its primary surface is the article system above (browsable landing, category nav, article pages); search is one demoted surface at `/search`. Aesthetic: Chakra Petch (Google Fonts), neo-brutalist structure crossed with restrained cyberpunk glow on a dark base ("exposed concrete meets terminal glow"). **Trust tiers are encoded visually, not decoratively** — the same official-outranks-community semantics the retrieval engine enforces: `official` carries the cyan glow ("live/authoritative"), `legacy` (the `layer=legacy` Azure AD heritage) gets an amber dashed archival treatment ("formerly"), `community` is matte/muted with a "verify against Microsoft" flag. Body text is high-contrast near-white; glow is accent-only (accessibility).
 
 Surfaces: a **search experience** (homepage) that calls the search proxy and renders ranked results with snippet, trust-tier encoding, citation (source URL / license / attribution per §4), and the engine's signals — `result_kind` (permission vs doc), permission name + GUID, and the least-privilege `advisory`/`grounded` flag rendered honestly as advisory (not an asserted answer). A **doc view** (`/doc/?id=<doc_id>`) renders a corpus document with a current-state section, a reserved history/"formerly known as" slot (§7 page model), and the required source-attribution footer. The WebGL logo-evolution hero remains a later, isolated chunk — not built here.
 

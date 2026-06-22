@@ -1,6 +1,12 @@
 ---
-const { title = 'Entrapedia', description = 'The Microsoft Entra ID encyclopedia — current-state reference and Azure AD heritage. Retrieval-grounded, cited, Cloudflare-native.' } = Astro.props;
 import '../styles/global.css';
+import { CATEGORIES } from '../lib/categories.mjs';
+const {
+  title = 'Entrapedia',
+  description = 'A curated Microsoft Entra ID encyclopedia - authored, browsable, interlinked concept articles with cited evidence and the Azure AD heritage story.',
+  breadcrumbs = null,        // [{label, href?}]
+  activeCategory = null,     // category id to highlight in nav
+} = Astro.props;
 const year = 2026;
 ---
 <!doctype html>
@@ -11,7 +17,7 @@ const year = 2026;
   <title>{title}</title>
   <meta name="description" content={description} />
   <meta name="color-scheme" content="dark" />
-  <meta name="theme-color" content="#07090d" />
+  <meta name="theme-color" content="#06080c" />
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -21,25 +27,42 @@ const year = 2026;
   <div class="shell">
     <div class="frame">
       <header class="masthead boot b1">
-        <p class="wordmark">ENTRA<b>PEDIA</b></p>
+        <a href="/" class="wordmark-link"><p class="wordmark">ENTRA<b>PEDIA</b></p></a>
         <span class="formerly">Azure AD &rarr; Entra ID</span>
-        <p class="tagline">// the microsoft entra id encyclopedia &mdash; current-state reference + azure ad heritage</p>
+        <form class="util-search" action="/search" method="get" role="search">
+          <span class="us-prompt" aria-hidden="true">&gt;</span>
+          <input name="q" type="search" maxlength="256" placeholder="search the corpus" aria-label="Search Entrapedia" />
+          <button type="submit" aria-label="Search">&#9906;</button>
+        </form>
+        <p class="tagline">// the curated microsoft entra id encyclopedia &mdash; explore concepts, not a results list</p>
       </header>
 
-      <div class="statusbar boot b2">
-        <span><span class="dot">&#9679;</span> live</span>
-        <span>mode: <b>retrieval-grounded</b></span>
-        <span>corpus: <b>embedding</b></span>
-        <span>ai generation: off</span>
-        <span>stack: cloudflare free-tier</span>
-      </div>
+      <nav class="catnav boot b2" aria-label="Categories">
+        <a href="/" class={`catnav-item${activeCategory === null ? ' on' : ''}`}>Home</a>
+        {CATEGORIES.map((c) => (
+          <a href={`/c/${c.id}`} class={`catnav-item${activeCategory === c.id ? ' on' : ''}`} title={c.blurb}>
+            <span class="cn-n">{c.n}</span>{c.label}
+          </a>
+        ))}
+      </nav>
+
+      {breadcrumbs && (
+        <div class="crumbs">
+          {breadcrumbs.map((b, i) => (
+            <span class="crumb">
+              {b.href ? <a href={b.href}>{b.label}</a> : <span>{b.label}</span>}
+              {i < breadcrumbs.length - 1 && <span class="sep">/</span>}
+            </span>
+          ))}
+        </div>
+      )}
 
       <main>
         <slot />
       </main>
 
       <footer class="sitefoot">
-        <span class="build">entrapedia &middot; <b>v0 foundation</b></span>
+        <span class="build">entrapedia &middot; <b>curated encyclopedia</b> &middot; v0</span>
         <span>content: cc-by-4.0 / mit &middot; code: mit</span>
         <span>&copy; {year} &middot; not affiliated with microsoft</span>
       </footer>

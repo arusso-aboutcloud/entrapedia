@@ -2,6 +2,8 @@
 
 Entrapedia is built in scoped, reviewed chunks. Each chunk has explicit deliverables and done-criteria. This roadmap tracks sequence and status; `DESIGN.md` holds the contracts each chunk inherits.
 
+**Identity note:** Entrapedia was re-founded as a *curated encyclopedia* (see `DESIGN.md`). The article layer is the product; the retrieval/corpus chunks below (3, 4, 4b) are now the cited **evidence layer** beneath it, and search is a demoted utility. Their framing is read encyclopedia-first; their behaviour is unchanged.
+
 ## Chunk 1 — Scaffold + design docs — in progress
 
 Private repository, directory skeleton, configuration stubs, and the authoritative documentation set (`README`, `DESIGN`, `ARCHITECTURE`, `SECURITY`, `CONTRIBUTING`, this file). `wrangler.toml` as a binding-declaration stub with no live IDs. No code, no provisioned resources.
@@ -53,6 +55,14 @@ Two api-reference-quality items, both gated on the same api-reference backfill c
 Static Astro site under `frontend/`, deployed to Cloudflare Pages (`entrapedia.pages.dev`). Chakra Petch + neo-brutalist/cyberpunk-glow design ("exposed concrete meets terminal glow"). Search experience over the `/search` API via a server-side proxy (secret never client-side; input-capped, edge-cached, soft-rate-limited); ranked cited results with **semantic trust-tier encoding** (official = cyan glow, legacy/heritage = amber archival, community = matte/verify) and honest `result_kind` + least-privilege `advisory` rendering. Doc view renders a corpus document with a source-attribution footer and a reserved current-state + history page model (DESIGN.md §7). Foundation is a first opinionated version; look-and-feel iterates from rendered output (v0.2 pass: widened layout + bolder/earned glow, more assertive brutalist frames + corner ticks, sharper trust-tier encoding, pushed Chakra Petch hierarchy). Search verified live end-to-end (real cited permissions-reference data with correct GUIDs; proxy->worker->Vectorize; secret server-side only). WebGL hero NOT built (chunk 6). Public launch (custom domain `entrapedia.aboutcloud.io`, removing the worker auth) is a later step — the corpus is still embedding.
 
 Deferred within chunk 5 follow-up: progressive-enhancement / no-JS search fallback (search is currently client-rendered); hardening the proxy rate limit to a Durable-Object/KV token bucket for public launch.
+
+## Article system — encyclopedia layer — built
+
+The build that makes Entrapedia an encyclopedia. Authored, browsable, interlinked concept articles (DESIGN.md §3): the seven-section model (authored vs cited, badged at render), a nine-category taxonomy + heritage lens, citations resolving to real corpus sources, a cited-and-dated Licensing posture, and inline + see-also interlinking. Articles are **git-versioned markdown** in `frontend/src/content/articles/<category>/<slug>.md` (Astro content collection) — never in D1, never auto-generated from retrieval. The landing is **browsable structure** (category grid, featured concepts, start-here, heritage entry) with **search demoted to a header utility** at `/search`; persistent category nav, breadcrumbs, and per-article TOC give a sense of place. `layer: legacy` articles carry the amber archival treatment. Ships with **two hand-authored exemplar articles** (Conditional Access — current; Azure AD B2C and External ID — legacy/heritage) marked as drafts, with genuine citations, to prove the model and serve as templates. ARCHITECTURE.md reframed (article layer primary; retrieval = evidence). Authoring guide in `docs/OPERATIONS.md`.
+
+## Curated content — broad-but-shallow authoring (curator work)
+
+Author concept stubs across the nine categories to establish the editorial spine and navigation, deepened over time. This is **curator work, not bot-generated** (DESIGN.md §3.3); the exemplars are templates, not a content pass. Gated on the article system (above). The evidence layer (retrieval) supports authoring by surfacing cited sources; it does not write article bodies.
 
 ## Chunk 6 — WebGL logo-evolution hero
 

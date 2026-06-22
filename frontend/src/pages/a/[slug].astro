@@ -1,0 +1,87 @@
+---
+import Base from '../../layouts/Base.astro';
+import { CATEGORY } from '../../lib/categories.mjs';
+import { getCollection, render } from 'astro:content';
+
+export async function getStaticPaths() {
+  const arts = await getCollection('articles');
+  return arts.map((a) => ({ params: { slug: a.data.slug }, props: { entry: a, all: arts } }));
+}
+
+const { entry, all } = Astro.props;
+const d = entry.data;
+const cat = CATEGORY[d.category];
+const isLegacy = d.layer === 'legacy';
+const { Content, headings } = await render(entry);
+const toc = headings.filter((h) => h.depth === 2);
+const seeAlso = (d.see_also || []).map((s) => all.find((a) => a.data.slug === s)).filter(Boolean);
+const crumbs = [{ label: 'Home', href: '/' }, { label: cat?.label || d.category, href: `/c/${d.category}` }, { label: d.title }];
+---
+<Base title={`${d.title} - Entrapedia`} description={d.summary} breadcrumbs={crumbs} activeCategory={d.category}>
+  <article class={`article ${isLegacy ? 't-legacy' : 't-official'}`}>
+    <header class="art-head">
+      <div class="badges">
+        <span class={`badge ${isLegacy ? 't-legacy' : 't-official'}`}>{isLegacy ? 'legacy / heritage' : 'official + authored'}</span>
+        {isLegacy && <span class="stamp">archive</span>}
+        {d.draft && <span class="draftflag">draft exemplar &mdash; for curator revision</span>}
+      </div>
+      <h1>{d.title}</h1>
+      <p class="art-sum">{d.summary}</p>
+      <div class="art-meta">
+        <span>category: <a href={`/c/${d.category}`}>{cat?.label}</a></span>
+        <span>last reviewed: <b>{d.last_reviewed}</b></span>
+        {d.tags && d.tags.length > 0 && <span>tags: {d.tags.join(' / ')}</span>}
+      </div>
+    </header>
+
+    <div class="art-layout">
+      <aside class="toc">
+        <span class="toc-h">contents</span>
+        <ol>
+          {toc.map((h) => <li><a href={`#${h.slug}`}>{h.text}</a></li>)}
+        </ol>
+        <div class="toc-key">
+          <span><i class="k-authored"></i> authored</span>
+          <span><i class="k-cited"></i> cited / grounded</span>
+        </div>
+      </aside>
+
+      <div class="art-body doc-body">
+        {d.licensing_as_of && (
+          <div class="lic-banner">
+            <b>Licensing &mdash; cited evidence, as of {d.licensing_as_of}.</b> Licensing tiers and bundling change; verify against the linked Microsoft sources before relying on it (cost/compliance impact).
+          </div>
+        )}
+        <Content />
+        {d.citations && d.citations.length > 0 && (
+          <div class="attribution cited-sources">
+            <span class="lbl">cited sources &mdash; every claim above is grounded here (DESIGN.md &sect;5)</span>
+            <ul>
+              {d.citations.map((c) => (
+                <li>
+                  <a href={c.source_url} target="_blank" rel="noopener">{c.title}</a>
+                  <span class="cs-lic"> / {c.license}</span>
+                  <span class="cs-attr">{c.attribution}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+    </div>
+
+    {seeAlso.length > 0 && (
+      <div class="see-also">
+        <span class="tag">see also</span>
+        <div class="sa-list">
+          {seeAlso.map((a) => (
+            <a class={`sa-item ${a.data.layer === 'legacy' ? 't-legacy' : ''}`} href={`/a/${a.data.slug}`}>
+              <span class="sa-cat">{CATEGORY[a.data.category]?.label}</span>
+              {a.data.title}
+            </a>
+          ))}
+        </div>
+      </div>
+    )}
+  </article>
+</Base>
