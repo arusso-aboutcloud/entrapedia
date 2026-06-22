@@ -1,132 +1,143 @@
 # Entrapedia — Design
 
-`entrapedia.aboutcloud.io` — a curated Microsoft Entra ID encyclopedia and reference, served entirely from the Cloudflare free tier.
+`entrapedia.aboutcloud.io` — a **curated Microsoft Entra ID encyclopedia**, served entirely from the Cloudflare free tier.
 
-This document is authoritative. Every implementation chunk that follows inherits the contracts defined here. No code or surface change may contradict this document without updating it first.
+This document is authoritative. Every implementation chunk inherits the contracts defined here. No code or surface change may contradict this document without updating it first.
+
+> **Identity revision note:** Entrapedia's primary identity is a *curated encyclopedia*. Earlier design framed it around RAG retrieval and search; that subsystem still exists and is excellent, but it is now the **evidence layer** beneath the encyclopedia, not the headline. Search is a utility, not the front door. This document leads with the encyclopedia identity throughout.
 
 ## 1. What Entrapedia is
 
-A reference encyclopedia for Microsoft Entra ID, for two audiences at once: end users who need to understand a concept, and engineers who need accurate, source-linked technical detail. It combines three things that do not currently exist together in one place:
+Entrapedia is a curated encyclopedia of Microsoft Entra ID, for two audiences at once: users who need to understand a concept ("what is this, how does it fit together"), and engineers who need precise, source-linked technical detail ("what permission, what cmdlet, which license, what changed").
 
-1. **Current-state reference** — drawn from official Microsoft documentation.
-2. **Change/release awareness** — what is new or deprecated, reusing the existing Entra-Tracker ingestion pattern.
-3. **An encyclopedic/historical layer** — the lineage from Azure AD to Microsoft Entra ID: old names, rename timelines, deprecated features and their modern equivalents. This is the differentiator and, because history does not change, it is also the cheapest content to serve.
+It is **not** a search engine over documents, and it is **not** an auto-assembled aggregation of retrieved snippets. It is a body of **authored, browsable, interlinked concept articles**, where:
+
+- The **editorial spine** — what the core concepts are, how they're explained, how they relate, and how they're organized — is curated by a domain expert. This is the product's differentiator and the thing that makes it an encyclopedia rather than an index.
+- The **evidence** — technical detail, current-state facts, licensing, citations — is drawn from the corpus (official Microsoft docs and attributed sources). The corpus proves; the curation structures and explains.
+- The **historical/heritage lens** — the Azure AD → Entra ID lineage, renamed features, retired products, deprecated-with-modern-equivalent — threads through every article. This is a core differentiator: no other reference tells the evolution story coherently.
+
+The distinguishing test: a visitor should arrive to *browsable structure and authored articles with a sense of place*, not a query box and a results list.
 
 ## 2. Design principles
 
-- **Cloudflare-native, zero cost.** Pages, Workers, Workers AI, Vectorize, D1, R2, Cron Triggers / Workflows only. No service that lacks a free tier (Browser Rendering, Hyperdrive, Images are explicitly out of scope).
-- **Informative-first, retrieval-grounded.** The site shows the authoritative source and helps the reader understand it. It does not pretend to be the source. This is a reputation guarantee, not a preference.
+- **Curated-first, corpus-backed.** Authored editorial structure is primary; the corpus is the cited evidence layer beneath it. Auto-assembling pages purely from retrieval is explicitly rejected — it produces an "agglomerate of information," not an encyclopedia.
+- **Search is a utility.** Search exists and is useful, but it is demoted to a tool in the corner, not the landing experience.
+- **Cloudflare-native, zero cost.** Pages, Workers, Workers AI, Vectorize, D1, R2, Cron Triggers only. No service lacking a free tier (Browser Rendering, Hyperdrive, Images are out of scope).
+- **Informative-first, retrieval-grounded.** The site shows authoritative sources and helps the reader understand them. Claim-bearing content is cited; the site does not assert unverified technical facts.
+- **Trust tiers are first-class.** Every stored chunk and every cited claim carries a trust level. Official Microsoft content is authoritative; community/third-party content is attributed and flagged, and never outranks official in conflict.
 - **Self-learning by re-indexing the source of truth.** "Self-learning" means scheduled incremental re-indexing of upstream sources, never a model freewheeling.
-- **Trust tiers are first-class.** Every stored chunk carries a trust level. Official Microsoft content is authoritative; community/third-party content is attributed and flagged, and never overrides an official source in retrieval conflict resolution.
-- **Incremental, human-reviewed delivery.** Build proceeds in scoped chunks. Docs ship in the same PR as the code they describe.
+- **Incremental, human-reviewed delivery.** Built in scoped, reviewed chunks; docs ship with the code they describe.
 
-## 3. Source model — four content types, two trust levels
+## 3. The encyclopedia layer (primary)
 
-### Trust levels
+### 3.1 Concept taxonomy — nine categories + a heritage lens
 
-- **Official** — authoritative. Microsoft-published. No staleness caveat beyond the document's own date.
-- **Community** — useful, attributed, carries a "verify against Microsoft" flag. Never outranks an Official source when the two conflict in retrieval.
+Articles are organized into nine top-level categories:
 
-### Content types
+1. **Fundamentals** — what Entra is, the tenant model, the Azure AD→Entra rename and family history, licensing tiers (Free/P1/P2/Suite), admin center, Graph / identity platform surfaces. The "start here" category.
+2. **Identity (Core Entra ID)** — users, groups, the directory, authentication (MFA, passwordless/passkeys, methods), SSO, Domain Services, hybrid identity (Connect / Cloud Sync).
+3. **Access & Conditional Access** — Conditional Access policies, policy-enforcement model, named locations, session controls, authentication strength.
+4. **Identity Protection & Security** — risk-based policies, risky users/sign-ins, risk detections, Identity Protection, SOC/security-operator actions.
+5. **Governance (ID Governance)** — entitlement management, access packages, access reviews, lifecycle workflows, PIM.
+6. **Applications & Workload Identity** — app registrations, enterprise apps, service principals, OAuth/permissions/consent, managed identities, workload identity federation.
+7. **Agent ID (AI-agent identity)** — governed identities for AI agents, Conditional Access for agents, governance/protection for agents. The current frontier of the Entra family.
+8. **External & Decentralized Identity** — External ID (B2B/B2C successor), Verified ID (decentralized credentials), and the legacy Azure AD B2C lineage.
+9. **Network Access (Global Secure Access)** — Internet Access, Private Access (ZTNA/SWG).
 
-**Type A — Doc corpus (full text).** The body of the encyclopedia. GitHub markdown repos, synced and embedded.
+**Heritage / Legacy** is a cross-cutting lens, not a tenth silo: the Azure AD lineage, renamed features, and retired products (e.g. Permissions Management, deprecated B2C) thread through the relevant articles via each article's History section and a legacy visual treatment. The `layer=legacy` corpus content (e.g. azure-docs-aad) feeds this.
 
-- `MicrosoftDocs/entra-docs` (MIT) — core. Already used by Entra-Tracker.
-- `MicrosoftDocs/entra-powershell-docs` — Entra PowerShell reference.
-- `microsoftgraph/microsoft-graph-docs-contrib` — Graph API surface.
-- Relevant subtrees of `MicrosoftDocs/azure-docs` (e.g. the B2C area already tracked).
+This taxonomy is the editorial starting structure; it is curated and may evolve.
 
-**Type B — Change / release feeds.** RSS/changelog items, ingested as feed entries, not full documents. This is the Entra-Tracker domain, reused.
+### 3.2 Article content model — seven sections
 
-- Microsoft Graph changelog RSS.
-- Microsoft Entra release-notes RSS.
-- Microsoft Developer unified changelog (filtered to Microsoft Identity Platform).
-- `api.aboutcloud.io/entra-tracker` RSS (dogfooding our own product).
+Every concept article has this spine. Sections split into **authored** (editorial voice, the curator's expertise) and **cited** (corpus-backed, every claim carries a citation):
 
-**Type C — Editorial / blog.** Announcements and narrative context, ingested as articles.
+1. **What it is** — authored. Plain-language definition and orientation.
+2. **Why it matters** — authored. Significance, when/why you encounter it.
+3. **How it relates** — authored. Where it sits in the identity model; links to related concepts (the interlinking that makes it a web of knowledge).
+4. **Current state** — cited. Technical detail from the official corpus, with source citations.
+5. **Licensing** — cited **and dated**. Which tier you need (Free/P1/P2/Suite/standalone), bundling gotchas. Licensing changes frequently and a wrong claim has cost/compliance consequences — this section is cited-evidence content with a visible "verify, licensing changes" posture and an as-of date, drawn from attributed licensing sources (Microsoft licensing docs; M365 Maps / Aaron Dinnage). Never asserted from authored memory.
+6. **History (formerly known as)** — cited where possible. Azure AD lineage, prior names, deprecations and modern equivalents. The heritage differentiator.
+7. **See also** — authored. Cross-links to related articles.
 
-- `devblogs.microsoft.com/identity` (Microsoft Entra Identity Platform).
-- Microsoft Entra Blog on Tech Community (per-category RSS, not HTML scraping).
+The authored sections carry the curator's voice and judgment; the cited sections are grounded in and linked to the corpus. This split is the core of the curated-but-grounded identity.
 
-**Type D — Structured reference.** Lookup data, not prose. Extracted into structured form before use.
+### 3.3 Curation model
 
-- M365 Maps licensing / SKU matrices — community, CC-BY-4.0, attribution to Aaron Dinnage required.
-- Our own AADSTS error catalog and RoleLens role data fit this type.
+Articles are **curated, not auto-generated.** A domain expert defines the concepts, writes the authored sections, and decides the structure and links; the corpus supplies cited detail. The first content pass is **broad-but-shallow** — many concept stubs across the categories to establish structure and navigation — deepened over time. Auto-assembly of article bodies from retrieval is not the model (it reproduces the "agglomerate" problem); retrieval *supports* authoring by surfacing the cited evidence.
 
-### Source-tier table
+### 3.4 Browsable experience
 
-| Source | Type | Trust | Sync cadence | License / attribution |
-|---|---|---|---|---|
-| entra-docs | A | Official | daily (incremental) | MIT |
-| entra-powershell-docs | A | Official | daily (incremental) | MIT |
-| microsoft-graph-docs-contrib | A | Official | daily (incremental) | per-repo, attribute |
-| azure-docs (subtrees) | A | Official | daily (incremental) | CC-BY-4.0, attribute |
-| Graph changelog RSS | B | Official | 4h | feed |
-| Entra release-notes RSS | B | Official | 4h | feed |
-| Dev unified changelog | B | Official | 4h | feed |
-| entra-tracker RSS | B | Official (self) | 4h | own |
-| devblogs identity | C | Official | daily | attribute |
-| Tech Community Entra blog | C | Official | daily | attribute |
-| M365 Maps | D | Community | weekly | CC-BY-4.0, attribute Dinnage |
-| AADSTS-Entra-Errors (self) | D | Official (self) | on change | own |
-| Entra-RoleLens (self) | D | Official (self) | on change | own |
+- **Landing page** is browsable structure, not a search box: categories, featured/core concepts, "start here", optionally "what's new" and a heritage entry point. Search is a utility element, not the centerpiece.
+- **Navigation**: persistent category nav, breadcrumbs, per-article table of contents, and "see also" cross-links — a sense of place and the ability to wander.
+- **Trust + heritage visual encoding** (carried from the frontend work): official vs community legible at a glance; legacy/heritage content visually distinct (archival treatment).
 
-M365-365-docs and the full Microsoft 365 corpus are deliberately **deferred** — large, only partially Entra-relevant, and expensive to embed. Revisit only with explicit scope approval.
+## 4. The evidence layer (supporting subsystem)
 
-## 4. Licensing obligations (binding)
+The corpus, ingestion, embedding, and retrieval — previously framed as the core — are now the **evidence layer** that makes the encyclopedia accurate and cited. They remain as built; only their framing changes.
 
-- `entra-docs` is MIT.
-- `azure-docs` and most other MicrosoftDocs repos publish content under CC-BY-4.0 (code under MIT). This **requires per-page attribution and a link back to the source article**, and grants no rights to Microsoft names, logos, or trademarks.
-- M365 Maps is CC-BY-4.0 by Aaron Dinnage — **per-page attribution to Dinnage / m365maps.com required**, no implied Microsoft endorsement.
+### 4.1 Sources — four content types, two trust levels
 
-Therefore every rendered page carries a source-attribution footer (source name, original URL, license). Every AI-surfaced snippet carries an inline citation. **A snippet without a citation is a bug.**
+**Trust levels:** *Official* (Microsoft-published, authoritative) and *Community* (useful, attributed, carries a "verify against Microsoft" flag; never outranks Official in conflict).
 
-## 5. Safety and cost contract (reputation-critical, binding)
+**Content types:**
+- **Type A — Doc corpus (full text):** `MicrosoftDocs/entra-docs` (MIT), `entra-powershell-docs`, `microsoftgraph/microsoft-graph-docs-contrib`, Entra-relevant subtrees of `azure-docs` (legacy layer).
+- **Type B — Change/release feeds:** Microsoft Graph changelog RSS, Entra release-notes RSS, the Microsoft Developer unified changelog, and Entrapedia's own `entra-tracker` RSS.
+- **Type C — Editorial/blog:** `devblogs.microsoft.com/identity`, the Entra Blog on Tech Community.
+- **Type D — Structured reference:** M365 Maps licensing/SKU matrices (community, CC-BY-4.0, attribute Dinnage); Entrapedia's own AADSTS error catalog and RoleLens role data.
 
-The free-tier model is weak and cannot be fine-tuned. Entra-specific correctness therefore comes from retrieval, never from model knowledge. The line between *retrieving-and-assembling* (safe) and *generating-from-reasoning* (unsafe on a weak model) governs every AI feature.
+Wikipedia was removed as an ingested source (CC-BY-SA share-alike incompatible with the CC-BY-4.0 content license); it may appear only as an optional external "further reading" link.
 
-- **KQL — informative only.** Surface the relevant Log Analytics article, explain the table (`SigninLogs`, `AuditLogs`) and key columns, link the schema, give operator hints for building a query. **Never emit a runnable KQL query** the user is expected to paste and trust.
-- **Graph / Graph beta / PowerShell — retrieval-grounded only.** Surface a code snippet only when it is anchored to a retrieved doc chunk, shown with its source citation beside it. If retrieval contains no grounded snippet, link the documentation instead of inventing code.
-- **Universal rule.** The site never presents generated code as authoritative without a live source link beside it.
-- **Permission GUIDs.** The Graph permissions reference is the highest-value, highest-risk page. Permission GUIDs and least-privilege mappings must come from retrieved content, never from model memory. (Maintainer practice: verify Graph GUIDs against merill.net.)
-- **Web search — opt-in mode, not default.** Default path is RAG over the indexed corpus (cheap, deterministic, cited). Web search is an explicit "search Microsoft Learn live" escape hatch, because each tool round-trip multiplies neuron cost.
-- **No vision.** Text-only. Cheaper and sufficient.
+### 4.2 Retrieval and search (the utility)
 
-## 6. Cost model — staying under the free tier
+Query → embed (bge-base, 768-dim) → Vectorize search with trust/source/content_type/layer filters → official-outranks-community re-rank → R2/D1 hydration → cited results, with query-result caching for zero-neuron repeats. Permissions-reference uses one-permission-per-chunk + identifier-aware exact matching. This engine powers both the utility search box and the cited-evidence surfaced inside articles.
 
-- **Workers AI: 10,000 neurons/day**, hard-stop on exhaustion (error 4006), no silent billing on the free plan. A ~500-token generation costs roughly 400–600 neurons, so unmitigated generation exhausts the budget within low-double-digit answers/day.
-- **Mitigations, in priority order:**
-  1. **Answer caching.** Cache generated/retrieved answers in KV or D1 keyed by normalized question. A cache hit costs zero neurons. Most traffic is a small set of repeated questions.
-  2. **Incremental embedding.** Embed only changed files per sync (the Entra-Tracker diff logic already exists). A full re-embed every run would blow the daily budget.
-  3. **Tiered model routing.** Tiny model for embeddings/classification; small fast model for lookups and "explain this command"; a reasoning/function-calling model only for the genuinely hard, citation-bearing answers.
-  4. **History is cached forever.** The historical layer is immutable — embed once, serve indefinitely.
-- **Storage** (D1, R2, Vectorize) sits well inside free allocations for a corpus this size.
-- **Open verification item:** confirm Vectorize free-tier status on the account dashboard before the storage chunk. Fallback if paid-only: similarity in a Worker over vectors stored in D1/R2.
+### 4.3 Storage
 
-## 7. Page model
+R2 (raw corpus bodies), D1 (document/chunk registry, per-permission metadata, answer cache, sync state), Vectorize (embeddings, one index, cosine, trust/source/content_type metadata indexes).
 
-Each major concept page has:
+## 5. Licensing obligations (binding)
 
-- A **current-state** section, from the Type A corpus, with source-attribution footer.
-- A **history / formerly-known-as** section — Azure AD heritage, rename timeline, deprecated equivalents. The memorabilia layer.
-- Inline citations on any surfaced snippet.
+- `entra-docs` MIT; `azure-docs` and most MicrosoftDocs repos CC-BY-4.0 (content) — per-page attribution + link back required; no rights to Microsoft names/logos/trademarks.
+- M365 Maps CC-BY-4.0 by Aaron Dinnage — per-page attribution to Dinnage / m365maps.com, no implied Microsoft endorsement.
+- Every rendered page carries a source-attribution footer; every surfaced/cited claim carries a citation. A claim without a citation is a bug.
+- Entrapedia code is MIT; content is CC-BY-4.0.
+
+## 6. Safety and cost contract (reputation-critical, binding)
+
+The free-tier model is weak and cannot be fine-tuned. Correctness comes from retrieval and curation, never from model knowledge.
+
+- **KQL — informative only.** Explain tables/columns, link the schema, give operator hints. Never emit a runnable query presented as trustworthy.
+- **Graph / Graph beta / PowerShell — retrieval-grounded only.** Surface a snippet only when anchored to a retrieved doc chunk, shown with its citation. If no grounded snippet, link the docs rather than invent code.
+- **Permission GUIDs** come from retrieved content, never model memory (verify against merill.net).
+- **Licensing claims** are cited-and-dated evidence, never authored-from-memory (see §3.2 item 5).
+- **Web search — opt-in mode, not default.**
+- **No vision. No LLM generation of article bodies** — articles are authored + cited, not generated.
+
+## 7. Cost model
+
+- Workers AI 10,000 neurons/day, hard reset 00:00 UTC, hard-fails (4006) on exhaustion. Embedding pass throttled at a per-day neuron budget (currently 6,000, ~2.5k reserved for retrieval) — real cost ≈1.25× the token-rate due to per-request overhead.
+- Mitigations: answer/query caching (zero-neuron repeats), incremental embedding (changed-only), tiered model use, immutable history cached indefinitely.
+- Storage well inside free allocations. Vectorize confirmed available on the account's free plan.
 
 ## 8. Build sequence
 
-Chunks are delivered and reviewed one at a time. This document is chunk 1's primary deliverable, alongside the repo scaffold.
+Delivered and reviewed in scoped chunks. Completed: scaffold + docs; storage tier; Tier-A fetch ingestion (26,575 docs); chunking + embedding (in progress, ~weeks); retrieval engine + cited search; permissions-reference quality fix; frontend foundation.
 
-1. **Scaffold + design docs** (this chunk): private repo, directory tree, `wrangler.toml` with bindings declared, `DESIGN.md`, `ARCHITECTURE.md`, `README.md`, architecture diagram. No ingestion code, no Worker logic, no RAG.
-2. **Storage tier**: D1 schema, R2 buckets, Vectorize index, bindings wired and verified.
-3. **Ingestion pipeline**: cron Worker forking the Entra-Tracker pattern for full-corpus incremental sync (fetch, diff, chunk, embed changed-only).
-4. **RAG retrieval + search API**: cited answers, retrieval quality proven. No LLM generation yet.
-5. **Frontend foundation**: Pages, Astro/Starlight, brutalist styling, content rendering, source-attribution footers, trust-tier visual treatment.
-6. **WebGL logo-evolution hero**: isolated, self-contained, talks to nothing. Late chunk by design.
+Now (this revision): re-found the product as a curated encyclopedia.
 
-The LLM-generation layer slots in after chunk 4, once retrieval quality is validated. v1 ships useful on retrieval + caching alone.
+Next:
+- **Article system** — concept-page content model (the seven sections), rendering, interlinking, category nav, browsable landing (search demoted to utility). Built to §3.
+- **Curated content (broad-but-shallow)** — author concept stubs across the nine categories; the editorial spine. This is curator work, not bot-generated.
+- **api-reference quality (chunk 4b)** — least-privilege retrieval from method pages + snippet-tab-chunk hygiene; gated on api-reference embedding coverage.
+- **Tier-B+C feeds**, **Tier-D structured (M365 Maps — feeds the Licensing sections)**, **WebGL heritage hero**, **public-launch prerequisites** (global rate limiter, custom domain, remove dev auth).
 
-## 9. Scope constraints for all bot prompts
+## 9. Standing constraints for all chunks
 
-- Update all affected docs in the same PR as any product/surface change. No "code first, docs later."
-- Do not commit any artifact not in the chunk's deliverables list, even if it seems useful.
-- ASCII-only content in `.ps1` / `.sh` / `.bicep` files.
-- Verify Graph permission GUIDs against merill.net before use.
+- Update all affected docs in the same change as any product/surface change.
+- Commit only the chunk's listed deliverables.
+- Article bodies are authored + cited, never auto-generated from retrieval.
+- Claim-bearing content (current state, licensing, history) must be cited; licensing additionally dated.
+- ASCII-only in `.ps1`/`.sh`/`.bicep`/`.sql`.
+- Verify Graph permission GUIDs against merill.net.
+- Infra: inspect freely; never delete or recreate Cloudflare resources without confirming first.
