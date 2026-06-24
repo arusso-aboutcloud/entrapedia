@@ -23,7 +23,7 @@ const crumbs = [{ label: 'Home', href: '/' }, { label: cat?.label || d.category,
       <div class="badges">
         <span class={`badge ${isLegacy ? 't-legacy' : 't-official'}`}>{isLegacy ? 'legacy / heritage' : 'official + authored'}</span>
         {isLegacy && <span class="stamp">archive</span>}
-        {d.draft && <span class="draftflag">draft exemplar &mdash; for curator revision</span>}
+        {d.draft && <span class="draftflag">draft</span>}
       </div>
       <h1>{d.title}</h1>
       <p class="art-sum">{d.summary}</p>
@@ -55,7 +55,7 @@ const crumbs = [{ label: 'Home', href: '/' }, { label: cat?.label || d.category,
         <Content />
         {d.citations && d.citations.length > 0 && (
           <div class="attribution cited-sources">
-            <span class="lbl">cited sources &mdash; every claim above is grounded here (DESIGN.md &sect;5)</span>
+            <span class="lbl">cited sources &mdash; every claim above links to its source</span>
             <ul>
               {d.citations.map((c) => (
                 <li>

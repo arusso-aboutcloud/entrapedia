@@ -22,7 +22,7 @@ import Base from '../layouts/Base.astro';
 
     function attribution(d) {
       const c = d.citation || {};
-      return `<div class="attribution"><span class="lbl">source attribution &mdash; required on every page (DESIGN.md &sect;4)</span>`
+      return `<div class="attribution"><span class="lbl">source attribution</span>`
         + `<div class="grid">`
         + `<div>source<br><b>${esc(d.source_label || d.source || '')}</b></div>`
         + `<div>license<br><b>${esc(c.license || 'unknown')}</b></div>`
@@ -47,7 +47,7 @@ import Base from '../layouts/Base.astro';
         + `<div class="section-rule"><span class="tag">history / formerly known as</span><hr></div>`
         + `<div class="history-placeholder">`
           + `<p>The Azure AD &rarr; Entra ID heritage layer for this concept &mdash; rename timeline, deprecated equivalents, and "formerly known as" notes &mdash; renders here.</p>`
-          + `<p class="mono">// per DESIGN.md &sect;7: each concept page carries a current-state section and a history section. The heritage layer is a later content chunk; this slot is reserved in the page model now.</p>`
+          + `<p class="mono">The Azure AD &rarr; Microsoft Entra ID heritage for this topic &mdash; prior names, deprecations, and modern equivalents &mdash; appears here as it is written.</p>`
         + `</div>`
         + attribution(d);
     }

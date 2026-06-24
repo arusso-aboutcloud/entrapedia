@@ -413,3 +413,27 @@ the landing and `/c/<category>`). Commit the markdown and push to `main`; the
 Pages deploy (`.github/workflows/pages.yml`, or git integration) rebuilds. No D1
 write, no embedding, no neuron cost -- the article is pure git content. The cited
 *evidence* it links to comes from the corpus/retrieval layer, which is separate.
+
+### Per-category corpus-bridge (sparse / empty categories)
+
+A category with no (or few) articles is not a dead end: the category page surfaces
+the topic's underlying source documents from the corpus, clearly labelled and
+visually distinct from curated articles.
+
+- **Selection method.** Each category in `frontend/src/lib/categories.mjs` carries
+  a `topic` string. The category page runs that `topic` as a client-side query
+  against the retrieval engine (`/api/search?q=<topic>&top_k=15`, through the
+  secret-safe proxy -- no retrieval-API change), de-duplicates the results by
+  `doc_id`, and renders up to ~10 as **"source doc"** cards (title -> the corpus
+  doc viewer, plus source URL / license / attribution). To re-aim a category's
+  bridge, edit its `topic`. The fixed per-category query is answer-cache + edge-
+  cache friendly, so repeat loads cost zero neurons.
+- **Scoped search.** The category page's search box prepends the category `topic`
+  to the visitor's query and sends it to `/search`, biasing results to the topic.
+- **Curated supersedes evidence.** When authored articles exist in a category they
+  render in an **articles** section ABOVE the **source documentation** section, so
+  the curated layer always leads and the corpus bridge sits beneath it as
+  supporting references. As articles are added, the bridge naturally recedes.
+- The source-doc cards are styled deliberately *unlike* curated article cards
+  (muted, dotted, "source doc" labelled) so evidence is never mistaken for an
+  authored article.

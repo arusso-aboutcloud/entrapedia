@@ -16,6 +16,7 @@ export async function getStaticPaths() {
 
 const { category, articles } = Astro.props;
 const crumbs = [{ label: 'Home', href: '/' }, { label: category.label }];
+const hasArticles = articles.length > 0;
 ---
 <Base title={`${category.label} - Entrapedia`} breadcrumbs={crumbs} activeCategory={category.id}>
   <section class="cat-head">
@@ -24,21 +25,101 @@ const crumbs = [{ label: 'Home', href: '/' }, { label: category.label }];
     <p class="cat-blurb">{category.blurb}</p>
   </section>
 
-  <section class="cat-list">
-    {articles.length === 0 ? (
-      <div class="notice">No articles authored in this category yet. The category is part of the editorial spine (DESIGN.md 3.1); the broad-but-shallow authoring pass &mdash; curator work, not bot-generated &mdash; will fill it in.</div>
-    ) : (
-      articles.map((a) => (
-        <a class={`artrow ${a.data.layer === 'legacy' ? 't-legacy' : 't-official'}`} href={`/a/${a.data.slug}`}>
-          <div class="ar-top">
-            <span class={`badge ${a.data.layer === 'legacy' ? 't-legacy' : 't-official'}`}>{a.data.layer === 'legacy' ? 'legacy' : 'official'}</span>
-            {a.data.draft && <span class="draftflag">draft exemplar</span>}
-          </div>
-          <h3>{a.data.title}</h3>
-          <p>{a.data.summary}</p>
-          <span class="ar-go">Read &rarr;</span>
-        </a>
-      ))
-    )}
+  {hasArticles && (
+    <section class="cat-list-wrap">
+      <span class="tag">articles</span>
+      <div class="cat-list">
+        {articles.map((a) => (
+          <a class={`artrow ${a.data.layer === 'legacy' ? 't-legacy' : 't-official'}`} href={`/a/${a.data.slug}`}>
+            <div class="ar-top">
+              <span class={`badge ${a.data.layer === 'legacy' ? 't-legacy' : 't-official'}`}>{a.data.layer === 'legacy' ? 'legacy' : 'official'}</span>
+              {a.data.draft && <span class="draftflag">draft</span>}
+            </div>
+            <h3>{a.data.title}</h3>
+            <p>{a.data.summary}</p>
+            <span class="ar-go">Read &rarr;</span>
+          </a>
+        ))}
+      </div>
+    </section>
+  )}
+
+  <section class="bridge-wrap">
+    <span class="tag">source documentation</span>
+    <p class="bridge-intro">
+      {hasArticles
+        ? 'The underlying Microsoft source documents this topic draws on — cited references, surfaced from the corpus. The articles above explain; these are the sources beneath them.'
+        : 'In-depth articles for this topic are on the way. In the meantime, here are the underlying Microsoft source documents for it — cited references straight from the corpus, not finished articles.'}
+    </p>
+
+    <form class="topic-search" id="topicSearch" data-topic={category.topic} role="search" autocomplete="off">
+      <span class="ts-prompt" aria-hidden="true">&gt;</span>
+      <input id="topicQ" type="search" maxlength="200" placeholder={`look something up in ${category.label.toLowerCase()}`} aria-label={`Search ${category.label}`} />
+      <button type="submit">Search topic</button>
+    </form>
+
+    <div id="srcdocs" class="srcdoc-list" data-topic={category.topic}>
+      <div class="notice"><span class="spinner"></span> loading source documentation...</div>
+    </div>
   </section>
+
+  <script>
+    const $ = (s, r = document) => r.querySelector(s);
+    const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const root = $('#srcdocs');
+    const topic = root.dataset.topic;
+
+    function trust(r) {
+      if (r.layer === 'legacy' || r.trust === 'legacy') return { c: 't-legacy', l: 'legacy' };
+      if (r.trust === 'community') return { c: 't-community', l: 'community' };
+      return { c: 't-official', l: 'official' };
+    }
+    function srcdocHTML(r) {
+      const t = trust(r);
+      const c = r.citation || {};
+      const title = r.permission || r.doc_title || r.doc_id || 'source document';
+      const docLink = r.doc_id ? `/doc/?id=${encodeURIComponent(r.doc_id)}` : null;
+      const host = (c.source_url || '').replace(/^https?:\/\//, '');
+      return `<div class="srcdoc ${t.c}">`
+        + `<div class="sd-top"><span class="sd-tag">source doc</span><span class="badge ${t.c}">${esc(t.l)}</span>`
+        + (r.result_kind === 'permission' ? '<span class="badge kind">permission</span>' : '') + `</div>`
+        + (docLink ? `<a class="sd-title" href="${docLink}">${esc(title)}</a>` : `<span class="sd-title">${esc(title)}</span>`)
+        + `<div class="sd-snip">${esc((r.snippet || '').slice(0, 180))}</div>`
+        + `<div class="cite"><span class="lbl">source</span>`
+        + (c.source_url ? `<a href="${esc(c.source_url)}" target="_blank" rel="noopener">${esc(host)}</a>` : '<span class="lic">unknown</span>')
+        + (c.license ? `<span class="lic">/ ${esc(c.license)}</span>` : '')
+        + (c.attribution ? `<span class="attr">${esc(c.attribution)}</span>` : '')
+        + `</div></div>`;
+    }
+
+    async function loadDocs() {
+      try {
+        const res = await fetch('/api/search?q=' + encodeURIComponent(topic) + '&top_k=15', { headers: { accept: 'application/json' } });
+        if (res.status === 429) { root.innerHTML = '<div class="notice">Source documentation is busy right now &mdash; refresh in a moment.</div>'; return; }
+        if (!res.ok) { root.innerHTML = '<div class="notice">Source documentation is unavailable right now.</div>'; return; }
+        const data = await res.json();
+        const seen = new Set();
+        const docs = [];
+        for (const r of (data.results || [])) {
+          const key = r.doc_id || r.doc_title;
+          if (!key || seen.has(key)) continue;
+          seen.add(key); docs.push(r);
+          if (docs.length >= 10) break;
+        }
+        root.innerHTML = docs.length
+          ? docs.map(srcdocHTML).join('')
+          : '<div class="notice">No source documents indexed for this topic yet &mdash; the corpus is still being built.</div>';
+      } catch (e) { root.innerHTML = '<div class="notice">Could not reach the source corpus.</div>'; }
+    }
+
+    $('#topicSearch').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const q = $('#topicQ').value.trim();
+      const full = q ? `${topic} ${q}` : topic;
+      location.href = '/search?q=' + encodeURIComponent(full);
+    });
+
+    loadDocs();
+  </script>
 </Base>

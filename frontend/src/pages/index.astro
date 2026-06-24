@@ -48,7 +48,7 @@ const card = (a) => a; // articles passed straight to markup below
             <div class="fc-top">
               <span class="badge kind">{CATEGORY[a.data.category]?.label || a.data.category}</span>
               {a.data.layer === 'legacy' && <span class="stamp">heritage</span>}
-              {a.data.draft && <span class="draftflag">draft exemplar</span>}
+              {a.data.draft && <span class="draftflag">draft</span>}
             </div>
             <h3 class="fc-title">{a.data.title}</h3>
             <p class="fc-sum">{a.data.summary}</p>
