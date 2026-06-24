@@ -62,7 +62,9 @@ The build that makes Entrapedia an encyclopedia. Authored, browsable, interlinke
 
 ## Curated content — broad-but-shallow authoring (curator work)
 
-Author concept stubs across the nine categories to establish the editorial spine and navigation, deepened over time. This is **curator work, not bot-generated** (DESIGN.md §3.3); the exemplars are templates, not a content pass. Gated on the article system (above). The evidence layer (retrieval) supports authoring by surfacing cited sources; it does not write article bodies.
+Author concept stubs across the nine categories to establish the editorial spine and navigation, deepened over time. This is **curator work** (DESIGN.md §3.3); the exemplars are templates, not a content pass. Gated on the article system (above). The evidence layer (retrieval) supports authoring by surfacing cited sources; it does not write article bodies.
+
+**Authoring-throughput tool — grounded draft-generation pipeline (spec'd, build on approval).** A local, zero-cost CLI that produces grounded, cited *first drafts* (`draft: true`) from the corpus so the curator edits-and-approves instead of authoring blank-page — retrieve-then-draft, strictly grounded (ungrounded cited content is stubbed, never invented), generation on the curator's self-hosted LLM (no paid API, no Workers AI generation spend), with an absolute human publish gate. It accelerates the curator pass above; it does not change the curated-not-generated contract (drafts are reviewed, edited, and published by a human). Spec (plan only): `docs/specs/draft-generation-pipeline.md`; build gated on spec review, then a single-draft quality review before any batch.
 
 ## Chunk 6 — WebGL logo-evolution hero
 
